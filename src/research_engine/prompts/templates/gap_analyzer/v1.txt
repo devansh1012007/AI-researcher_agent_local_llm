@@ -1,0 +1,22 @@
+Research objective: {{objective}}
+
+Research plan branches and status:
+{{branches_summary}}
+
+Current claims (id: text [kind] supported_by=N evidence items):
+{{claims_summary}}
+
+Open contradictions:
+{{contradictions_summary}}
+
+Source type / tier coverage: {{source_coverage}}
+
+Identify the most important remaining gaps. Categories:
+MISSING_INFORMATION, WEAK_EVIDENCE, MISSING_SOURCE_TYPE, CONTRADICTION,
+OUTDATED_INFORMATION, UNVERIFIED_NUMERIC_CLAIM, MISSING_ALTERNATIVE_EXPLANATION,
+UNDERREPRESENTED_SUBTOPIC.
+
+Respond ONLY with JSON:
+{"gaps": [{"description": "...", "category": "...", "importance": 0.0,
+"severity": "low|medium|high", "evidence_needed": "what evidence would resolve this",
+"branch": "", "recommended_queries": [{"text": "...", "reason": "..."}]}]}

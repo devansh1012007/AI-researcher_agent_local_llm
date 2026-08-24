@@ -1,0 +1,22 @@
+Research objective: {{objective}}
+
+Research question: {{research_question}}
+
+Scope and assumptions:
+{{scope_and_assumptions}}
+
+Evidence-backed findings (each with evidence IDs):
+{{findings_input}}
+
+Contradictions (do NOT resolve, report faithfully):
+{{contradictions_input}}
+
+Known gaps / unknowns:
+{{gaps_input}}
+
+Source quality summary: {{source_summary}}
+
+Write the {{section}} section. Use markdown. Cite evidence inline as [EVIDENCE ev_xxxxxx].
+Mark inferences as "(inference)" and assumptions as "(assumption)".
+
+Respond ONLY with JSON: {"markdown": "..."}

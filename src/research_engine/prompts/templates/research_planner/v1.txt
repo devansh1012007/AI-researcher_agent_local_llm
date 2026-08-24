@@ -1,0 +1,13 @@
+Research objective: {{objective}}
+
+You are planning the research for the mode: {{mode}} ({{mode_hint}}).
+
+Allowed branch categories with hints:
+{{categories_hint}}
+
+Respond ONLY with JSON:
+{"branches": [{"category": "one of the allowed categories", "question": "specific research question",
+"importance": 0.0, "required_evidence": "what evidence would answer this",
+"source_preferences": ["provider names like web, openalex, arxiv, crossref, government"]}]}
+
+Cover 5-9 branches. Every category you include must be from the allowed list.

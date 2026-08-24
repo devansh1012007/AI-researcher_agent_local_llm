@@ -1,0 +1,23 @@
+Raw user request:
+"""
+{{raw_question}}
+"""
+
+Research mode: {{mode}} ({{mode_hint}})
+
+Produce a problem definition as JSON with exactly these keys:
+{
+  "objective": "one-sentence statement of the research objective",
+  "research_question": "the single central question",
+  "scope": ["topics inside scope"],
+  "out_of_scope": ["explicitly excluded areas"],
+  "subquestions": ["4-8 decomposed subquestions that jointly answer the main question"],
+  "entities": ["key systems, companies, methods, or organizations involved"],
+  "constraints": ["time horizon, geography, language or other constraints"],
+  "desired_depth": "quick-scan | survey | deep-dive",
+  "time_horizon": "e.g. 'last 3 years', 'current state'",
+  "geographic_scope": "e.g. global / India / EU",
+  "evaluation_criteria": ["what makes an answer good"],
+  "ambiguities": ["things that are ambiguous in the request"],
+  "assumptions": [{"text": "assumption made", "rationale": "why reasonable"}]
+}

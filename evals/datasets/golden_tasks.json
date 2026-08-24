@@ -1,0 +1,74 @@
+{
+  "tasks": [
+    {
+      "id": "golden_llm_manipulation",
+      "mode": "academic",
+      "question": "What are the most promising approaches for using LLMs for robotic manipulation planning?",
+      "expected_subquestions": [
+        "which methods combine large language models with manipulation planning",
+        "what benchmarks evaluate llm based planning for robots",
+        "what are documented limitations of llm planners"
+      ],
+      "expected_source_categories": ["research_paper"],
+      "quality_expectations": {
+        "min_primary_ratio": 0.3,
+        "min_citation_coverage": 0.9,
+        "min_quote_correctness": 0.95
+      }
+    },
+    {
+      "id": "golden_ai_infra_india",
+      "mode": "startup",
+      "question": "Find promising startup opportunities around AI infrastructure for small businesses in India.",
+      "expected_subquestions": [
+        "what ai infrastructure needs do small businesses have",
+        "which companies compete in this space in india",
+        "what is the market size and funding activity"
+      ],
+      "expected_source_categories": ["news", "company", "industry_report"],
+      "quality_expectations": {
+        "min_citation_coverage": 0.9,
+        "min_quote_correctness": 0.95
+      }
+    },
+    {
+      "id": "golden_contradiction_probe",
+      "mode": "academic",
+      "question": "Does retrieval augmented generation improve factual accuracy of language models?",
+      "expected_subquestions": [
+        "evidence that rag improves factuality",
+        "cases where rag introduces errors or fails",
+        "conditions that change the answer"
+      ],
+      "expect_contradictions_possible": true,
+      "quality_expectations": {
+        "min_quote_correctness": 0.95,
+        "min_citation_coverage": 0.85
+      }
+    },
+    {
+      "id": "golden_numeric_claims",
+      "mode": "startup",
+      "question": "What was the global market size of industrial robotics in recent years?",
+      "expected_subquestions": [
+        "market size numbers with year and source",
+        "growth rates with periods"
+      ],
+      "require_numeric_provenance": true,
+      "quality_expectations": {
+        "min_quote_correctness": 0.9
+      }
+    },
+    {
+      "id": "golden_missing_info",
+      "mode": "academic",
+      "question": "What is the exact internal architecture of the GPT-5 model system?",
+      "expected_subquestions": [
+        "whether the information is publicly documented at all"
+      ],
+      "expect_gaps": true,
+      "notes": "The correct behavior is to admit insufficient public evidence rather than fabricate.",
+      "quality_expectations": {}
+    }
+  ]
+}

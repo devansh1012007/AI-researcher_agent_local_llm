@@ -1,0 +1,117 @@
+[
+  {
+    "task": "golden_llm_manipulation",
+    "status": "PASS",
+    "scores": {
+      "primary_source_ratio": 0.7692307692307693,
+      "source_diversity_domains": 4,
+      "sources_accepted": 39,
+      "sources_rejected": 21,
+      "quote_correctness": 1.0,
+      "rejected_evidence_ratio": 0.0,
+      "citation_coverage": 1.0,
+      "duplicate_rate": 0.0,
+      "subquestion_coverage": 0.3333333333333333,
+      "gaps_discovered": 5,
+      "gaps_resolved": 0,
+      "contradictions_found": 0,
+      "new_information_rate": 0.0,
+      "llm_calls": 192,
+      "queries_executed": 9,
+      "wall_clock_seconds": 0.8166818618774414,
+      "errors": 0
+    }
+  },
+  {
+    "task": "golden_ai_infra_india",
+    "status": "PASS",
+    "scores": {
+      "primary_source_ratio": 0.18181818181818182,
+      "source_diversity_domains": 2,
+      "sources_accepted": 11,
+      "sources_rejected": 0,
+      "quote_correctness": 1.0,
+      "rejected_evidence_ratio": 0.0,
+      "citation_coverage": 1.0,
+      "duplicate_rate": 0.0,
+      "subquestion_coverage": 0.0,
+      "gaps_discovered": 2,
+      "gaps_resolved": 0,
+      "contradictions_found": 0,
+      "new_information_rate": 1.0,
+      "llm_calls": 36,
+      "queries_executed": 5,
+      "wall_clock_seconds": 0.10341572761535645,
+      "errors": 0
+    }
+  },
+  {
+    "task": "golden_contradiction_probe",
+    "status": "PASS",
+    "scores": {
+      "primary_source_ratio": 0.18181818181818182,
+      "source_diversity_domains": 2,
+      "sources_accepted": 11,
+      "sources_rejected": 0,
+      "quote_correctness": 1.0,
+      "rejected_evidence_ratio": 0.0,
+      "citation_coverage": 1.0,
+      "duplicate_rate": 0.0,
+      "subquestion_coverage": 0.0,
+      "gaps_discovered": 2,
+      "gaps_resolved": 0,
+      "contradictions_found": 0,
+      "new_information_rate": 1.0,
+      "llm_calls": 36,
+      "queries_executed": 5,
+      "wall_clock_seconds": 0.1091768741607666,
+      "errors": 0
+    }
+  },
+  {
+    "task": "golden_numeric_claims",
+    "status": "PASS",
+    "scores": {
+      "primary_source_ratio": 0.18181818181818182,
+      "source_diversity_domains": 2,
+      "sources_accepted": 11,
+      "sources_rejected": 0,
+      "quote_correctness": 1.0,
+      "rejected_evidence_ratio": 0.0,
+      "citation_coverage": 1.0,
+      "duplicate_rate": 0.0,
+      "subquestion_coverage": 0.0,
+      "gaps_discovered": 2,
+      "gaps_resolved": 0,
+      "contradictions_found": 0,
+      "new_information_rate": 1.0,
+      "llm_calls": 36,
+      "queries_executed": 5,
+      "wall_clock_seconds": 0.1538703441619873,
+      "errors": 0
+    }
+  },
+  {
+    "task": "golden_missing_info",
+    "status": "PASS",
+    "scores": {
+      "primary_source_ratio": 0.18181818181818182,
+      "source_diversity_domains": 2,
+      "sources_accepted": 11,
+      "sources_rejected": 0,
+      "quote_correctness": 1.0,
+      "rejected_evidence_ratio": 0.0,
+      "citation_coverage": 1.0,
+      "duplicate_rate": 0.0,
+      "subquestion_coverage": 0.0,
+      "gaps_discovered": 2,
+      "gaps_resolved": 0,
+      "contradictions_found": 0,
+      "new_information_rate": 1.0,
+      "llm_calls": 36,
+      "queries_executed": 5,
+      "wall_clock_seconds": 0.13831210136413574,
+      "errors": 0
+    }
+  }
+]

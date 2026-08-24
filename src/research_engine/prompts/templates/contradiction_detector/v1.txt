@@ -1,0 +1,7 @@
+Claims to check for contradictions:
+{{claims_summary}}
+
+Respond ONLY with JSON:
+{"contradictions": [{"claim_a": "claim id", "claim_b": "claim id",
+"explanation": "possible neutral explanation why sources disagree",
+"follow_up_query": "a search query that could help resolve this"}]}

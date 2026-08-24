@@ -1,0 +1,55 @@
+# GAR example configuration — copy to gar.yaml and adjust.
+# All values here are the safe defaults for a laptop.
+
+mode: academic            # academic | startup
+
+models:
+  extractor:
+    provider: ollama      # ollama | openai_compatible | llama_cpp | mock
+    model: qwen2.5:7b
+    base_url: ""          # e.g. http://localhost:11434 (ollama default)
+    temperature: 0.1
+    max_tokens: 2048
+    context_tokens: 8000
+  reasoning:
+    provider: ollama
+    model: qwen2.5:14b
+    temperature: 0.2
+    max_tokens: 3072
+    context_tokens: 8000
+  synthesis:
+    provider: ollama
+    model: qwen2.5:14b
+    temperature: 0.3
+    max_tokens: 4096
+
+research:
+  mode: academic          # default mode for new projects
+  max_iterations: 3
+  max_queries_per_iteration: 8
+  max_documents: 50
+  max_sources_total: 150
+  max_llm_calls: 300
+  max_wall_clock_minutes: 60
+  review_gates_enabled: false   # true => pauses at problem/plan/cycle/synthesis gates
+
+network:
+  timeout_seconds: 20
+  max_retries: 3
+  respect_robots: true
+
+resources:
+  max_parallel_fetches: 5       # IO-bound, safe to parallelize
+  max_parallel_llm_tasks: 1     # keep at 1 on laptop GPUs
+  max_document_size_mb: 10
+  max_chunk_chars: 6000
+
+search:
+  web_provider: duckduckgo      # duckduckgo | searxng
+  searxng_base_url: ""          # e.g. http://localhost:8080 (recommended for reliability)
+  results_per_query: 10
+  academic_providers: [openalex, crossref, arxiv]
+  semantic_scholar_api_key: ""
+
+storage:
+  data_dir: research_data

@@ -1,0 +1,16 @@
+Research objective: {{objective}}
+Iteration: {{iteration}} of max {{max_iterations}}
+
+Metrics this iteration:
+- new evidence items: {{new_evidence}}
+- new claims: {{new_claims}}
+- duplicate rate: {{duplicate_rate}}
+- open high-importance gaps: {{high_gaps}}
+- total evidence so far: {{total_evidence}}
+- source domains seen: {{domains}}
+
+Respond ONLY with JSON:
+{"should_continue": true|false,
+"confidence": 0.0,
+"reasoning": "brief justification",
+"dominant_signal": "new_information_rate | gaps_remaining | budget | duplicate_saturation"}

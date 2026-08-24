@@ -1,0 +1,10 @@
+Branch question: {{branch_question}}
+Required evidence: {{required_evidence}}
+
+Known context from prior research (may be empty):
+{{context}}
+
+Generate {{n_queries}} DISTINCT search queries for this branch. Vary perspective: at least one should probe limitations, criticism, or failure cases, and one should target primary sources.
+
+Respond ONLY with JSON:
+{"queries": [{"text": "...", "kind": "primary|synonym|technical|contradiction|date_filtered|source_specific", "reason": "why this query helps answer the branch question"}]}
