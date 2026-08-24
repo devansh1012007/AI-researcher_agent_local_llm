@@ -119,7 +119,7 @@ def test_startup_mode_uses_same_core(cfg, fake_registry, make_orchestrator):
     project = orch.run()
     assert project.state == ProjectState.COMPLETED
     plan = orch.repos.plans.all(project.id)[-1]
-    cats = {b.category.value for b in plan.branches}
+    cats = {b.category for b in plan.branches}
     startup_cats = {"MARKET", "CUSTOMERS", "PAIN", "COMPETITORS"}
     assert cats & startup_cats, f"expected startup categories, got {cats}"
 

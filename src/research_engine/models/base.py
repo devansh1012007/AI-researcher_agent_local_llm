@@ -17,12 +17,14 @@ def utcnow() -> datetime:
 class Entity(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    PREFIX: ClassVar[str] = "ent"
+
     id: str = Field(default_factory=lambda: "")
     project_id: str = ""
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
 
-    def ensure_id(self, prefix: str) -> None:
+    def ensure_id(self, prefix: str | None = None) -> None:
         if not self.id:
-            self.id = next_id(prefix)
+            self.id = next_id(prefix or self.PREFIX)
         self.updated_at = utcnow()

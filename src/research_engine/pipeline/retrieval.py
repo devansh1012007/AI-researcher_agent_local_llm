@@ -74,7 +74,7 @@ class RetrievalWorker:
 
     def _execute_one(self, project_id: str, q: SearchQuery) -> list:
         branch = next((b for b in self.repos.branches.all(project_id) if b.id == q.branch), None)
-        route = route_for(branch.category.value if branch else "GENERIC",
+        route = route_for(branch.category if branch else "GENERIC",
                           branch.source_preferences if branch else None)
         results = []
         for prov in route.providers:

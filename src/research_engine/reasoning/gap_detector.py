@@ -47,9 +47,11 @@ class GapDetector:
         self.provider = provider
         self.repos = repos
 
-    def run(self, project_id: str, plan, problem, iteration: int) -> list[Gap]:
+    def run(self, project_id: str, plan, problem, iteration: int, mode: str = "academic") -> list[Gap]:
         existing_gaps = self.repos.gaps.all(project_id)
+        from research_engine.reasoning.structural_gaps import StructuralGapDetector
         rule_gaps = self._rule_based_gaps(project_id, plan)
+        rule_gaps += StructuralGapDetector(self.repos).detect(project_id, mode)
         llm_gaps = self._llm_gaps(project_id, plan, problem, iteration)
 
         existing_open = [g for g in existing_gaps if not g.resolved]
@@ -90,7 +92,7 @@ class GapDetector:
             f"{c.id}: {c.text[:140]} [{c.kind.value}] supported_by={len(c.supported_by)}"
             for c in claims[:60]) or "(none)"
         branches_summary = "\n".join(
-            f"{b.id} {b.category.value}: {b.question[:100]} status={b.status}"
+            f"{b.id} {b.category}: {b.question[:100]} status={b.status}"
             for b in plan.branches) if plan else "(no plan)"
         contradictions_summary = "\n".join(
             f"{k.id}: {k.statement_a[:80]} VS {k.statement_b[:80]}"
@@ -134,7 +136,7 @@ class GapDetector:
                 category=GapCategory.MISSING_INFORMATION, importance=0.95, severity=Severity.HIGH,
                 evidence_needed="Any credible source content addressing a plan branch.",
                 recommended_queries=[RecommendedQuery(
-                    text=b.question[:120], reason=f"branch {b.category.value}")
+                    text=b.question[:120], reason=f"branch {b.category}")
                     for b in plan.branches[:3]],
             ))
 

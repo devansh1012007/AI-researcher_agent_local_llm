@@ -116,7 +116,7 @@ class ReportGenerator:
                         if e.status.value != "REJECTED" and any(
                             c.branch == b.id for c in claims if e.id in c.supported_by)])
             status = next((c for c in claims if False), None)
-            lines.append(f"## [{b.category.value}] {b.question}")
+            lines.append(f"## [{b.category}] {b.question}")
             lines.append(f"- importance: {b.importance:.2f}; branch id: `{b.id}`; status: {b.status}")
             lines.append(f"- required evidence: {b.required_evidence or '(unspecified)'}")
             lines.append(f"- source preferences: {', '.join(b.source_preferences) or 'default routing'}")

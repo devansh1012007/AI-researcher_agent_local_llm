@@ -12,13 +12,19 @@ from research_engine.models.enums import BranchCategory, SourceType
 class ResearchBranch(Entity):
     PREFIX: ClassVar[str] = "br"
 
-    category: BranchCategory = BranchCategory.GENERIC
+    category: str = BranchCategory.GENERIC.value
     question: str = ""
     importance: float = 0.5          # 0..1
     required_evidence: str = ""      # what would count as an answer
     source_preferences: list[str] = Field(default_factory=list)  # provider names
     status: str = "open"             # open | partially_answered | answered | saturated
     priority: int = 1                # 1 = highest
+    # --- Phase 2 branch system ---
+    parent_branch_id: str = ""       # hierarchical branching (subbranches)
+    strategy: str = ""               # BROAD_SWEEP | FOCUSED_DEEP_DIVE | ...
+    coverage_score: float = 0.0      # computed by reasoning/coverage.py
+    evidence_count: int = 0
+    gap_count: int = 0
 
     def ensure_id(self) -> None:
         super().ensure_id(self.PREFIX)

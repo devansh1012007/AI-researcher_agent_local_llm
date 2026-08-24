@@ -175,6 +175,15 @@ CREATE VIRTUAL TABLE IF NOT EXISTS evidence_fts USING fts5(
 """
 
 
+_EXTRA_TABLES = """
+CREATE TABLE IF NOT EXISTS falsification_tests (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    data TEXT NOT NULL
+);
+"""
+
+
 class Database:
     """Thread-safe SQLite wrapper. One connection per thread via threading.local."""
 
@@ -201,6 +210,7 @@ class Database:
         c = self._conn()
         with c:
             c.executescript(_SCHEMA)
+            c.executescript(_EXTRA_TABLES)
             row = c.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()
             if row is None:
                 c.execute("INSERT INTO meta(key, value) VALUES('schema_version', ?)", (str(SCHEMA_VERSION),))

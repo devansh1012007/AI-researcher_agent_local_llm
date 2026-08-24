@@ -15,18 +15,30 @@ from research_engine.models.base import Entity
 class Opportunity(Entity):
     PREFIX: ClassVar[str] = "opp"
 
-    customer: str = ""
+    customer_segment: str = ""
+    job_to_be_done: str = ""
     problem: str = ""
+    severity: float = 0.0           # 0..1, evidence-derived (see scoring)
+    frequency: float = 0.0
     current_alternative: str = ""
     evidence_ids: list[str] = Field(default_factory=list)
     market_signal_evidence_ids: list[str] = Field(default_factory=list)
     competitor_names: list[str] = Field(default_factory=list)
-    why_now: list[str] = Field(default_factory=list)
+    why_now: list[str] = Field(default_factory=list)          # each item must cite change evidence
+    distribution: list[str] = Field(default_factory=list)
+    pricing_evidence_ids: list[str] = Field(default_factory=list)
     risks: list[str] = Field(default_factory=list)
     critical_assumptions: list[str] = Field(default_factory=list)
-    validation_tests: list[str] = Field(default_factory=list)
-    confidence: float = 0.0
+    secondary_assumptions: list[str] = Field(default_factory=list)
+    falsification_tests: list[str] = Field(default_factory=list)
     notes: str = ""
+    confidence: float = 0.0
+    # transparent score breakdown (spec #39) - never an opaque number
+    score_breakdown: dict = Field(default_factory=dict)
 
     def ensure_id(self) -> None:
         super().ensure_id(self.PREFIX)
+
+    @property
+    def customer(self) -> str:
+        return self.customer_segment

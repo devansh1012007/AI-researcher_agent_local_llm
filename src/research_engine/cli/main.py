@@ -124,7 +124,7 @@ def cmd_inspect(args):
     plans = r.plans.all(p.id)
     if plans:
         for br in sorted(plans[-1].branches, key=lambda x: -x.importance):
-            console.print(f"[cyan]{br.category.value:22}[/cyan] imp={br.importance:.2f} {br.question[:100]}")
+            console.print(f"[cyan]{br.category:22}[/cyan] imp={br.importance:.2f} {br.question[:100]}")
     console.rule("recent claims")
     for c in sorted(r.claims.all(p.id), key=lambda x: -x.confidence)[:args.limit]:
         console.print(f"[green]{c.id}[/green] conf={c.confidence:.2f} [{c.kind.value}] {c.text[:120]}")

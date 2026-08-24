@@ -61,13 +61,17 @@ class PlannerWorker:
         out, errors = self.provider.structured(spec.system, user, PlanOutput)
         plan = ResearchPlan(project_id=project_id, objective=problem.objective)
         valid_cats = {c.value for c in allowed}
+        any_valid = False
         for b in (out.branches if out else []):
             cat = b.category.upper() if b.category else ""
             if cat not in valid_cats:
-                cat = BranchCategory.GENERIC if BranchCategory.GENERIC in allowed else allowed[0].value
+                cat = BranchCategory.GENERIC.value if BranchCategory.GENERIC.value in valid_cats \
+                    else allowed[0].value
+            else:
+                any_valid = True
             branch = ResearchBranch(
                 project_id=project_id,
-                category=BranchCategory(cat),
+                category=str(cat),
                 question=b.question or b.category,
                 importance=min(max(b.importance, 0.0), 1.0),
                 required_evidence=b.required_evidence,
@@ -75,6 +79,9 @@ class PlannerWorker:
             )
             branch.ensure_id()
             plan.branches.append(branch)
+        if not any_valid:
+            # every proposed category was invalid for this mode -> use mode skeleton
+            plan.branches = []
         if not plan.branches:
             # deterministic fallback: mode-appropriate branch skeleton around the question
             q = problem.research_question or problem.objective
@@ -166,7 +173,7 @@ class QueryPlannerWorker:
                     continue  # semantic dedup — never run near-identical searches
                 q = SearchQuery(
                     project_id=project_id, text=text, branch=branch.id,
-                    reason=cand.reason or f"branch {branch.category.value}",
+                    reason=cand.reason or f"branch {branch.category}",
                     kind=cand.kind if cand.kind in {
                         "primary", "synonym", "technical", "contradiction",
                         "date_filtered", "source_specific"} else "primary",

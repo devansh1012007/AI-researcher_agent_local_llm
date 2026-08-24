@@ -194,9 +194,9 @@ class Orchestrator:
         queries = qp.run(p.id, plan, iteration=0)
         self._complete_task(task, {"branches": len(plan.branches), "queries": len(queries)})
         self.events.record(p.id, "plan_created", "planning", task.id,
-                           metadata={"branches": [b.category.value for b in plan.branches]},
+                           metadata={"branches": [b.category for b in plan.branches]},
                            human_line=f"\n[{_ts()}] RESEARCH PLAN ({len(plan.branches)} branches)\n"
-                                      + "\n".join(f"  [{b.category.value}] {b.question[:90]}"
+                                      + "\n".join(f"  [{b.category}] {b.question[:90]}"
                                                   for b in sorted(plan.branches, key=lambda x: -x.importance)))
         if not self._review_gate(ReviewGate.AFTER_INITIAL_RESEARCH_PLAN):
             return

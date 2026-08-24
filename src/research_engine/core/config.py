@@ -67,6 +67,12 @@ class StorageConfig(BaseModel):
     data_dir: str = "research_data"
 
 
+class EmbeddingsConfig(BaseModel):
+    provider: str = "hashing"   # hashing | ollama | openai_compatible | none
+    model: str = "nomic-embed-text"
+    base_url: str = ""
+
+
 class SearchConfig(BaseModel):
     web_provider: str = "duckduckgo"  # duckduckgo | searxng | none
     searxng_base_url: str = ""
@@ -85,6 +91,7 @@ class AppConfig(BaseModel):
     resources: ResourceConfig = Field(default_factory=ResourceConfig)
     storage: StorageConfig = Field(default_factory=StorageConfig)
     search: SearchConfig = Field(default_factory=SearchConfig)
+    embeddings: EmbeddingsConfig = Field(default_factory=EmbeddingsConfig)
 
     @classmethod
     def load(cls, path: str | Path | None = None) -> "AppConfig":
