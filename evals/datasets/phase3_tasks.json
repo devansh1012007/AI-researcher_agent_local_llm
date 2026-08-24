@@ -1,0 +1,25 @@
+{
+  "tasks": [
+    {
+      "id": "p3_competing_hypotheses",
+      "mode": "academic",
+      "question": "Why do LLM-based planners fail in long-horizon manipulation tasks?",
+      "phase3": "hypotheses",
+      "expect_hypothesis_pipeline": true,
+      "quality_expectations": {
+        "min_quote_correctness": 0.95,
+        "min_citation_coverage": 0.85
+      }
+    },
+    {
+      "id": "p3_startup_validation_chain",
+      "mode": "startup",
+      "question": "Should we pursue an AI scheduling assistant for small clinics?",
+      "phase3": "validation",
+      "expect_business_hypotheses": true,
+      "quality_expectations": {
+        "min_citation_coverage": 0.9
+      }
+    }
+  ]
+}

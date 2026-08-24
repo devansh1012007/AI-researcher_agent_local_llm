@@ -157,16 +157,18 @@ class FakeAcademicProvider(SearchProvider):
     def search(self, query: str, max_results: int = 10) -> list[RawSearchHit]:
         self.queries_seen.append(query)
         out = []
+        # deterministic per-query ids: distinct queries find distinct papers
+        qhash = abs(hash(query)) % 9000 + 1000
         for i in range(self.n):
             out.append(RawSearchHit(
-                url=f"https://arxiv.org/abs/2401.000{i}{i}",
+                url=f"https://arxiv.org/abs/2401.{qhash}{i}",
                 title=f"Paper: {query[:50]}",
                 snippet=f"We study {query} with experiments on three benchmarks.",
                 published_date="2025-01-15",
-                metadata={"provider": self.name, "doi": f"10.1000/fake.{i}",
+                metadata={"provider": self.name, "doi": f"10.1000/fake.{qhash}.{i}",
                           "authors": ["A. Researcher", "B. Scientist"],
                           "venue": "FakeConf", "cited_by_count": 10 + i,
-                          "pdf_url": f"https://arxiv.org/pdf/2401.000{i}" if self.with_pdf else ""},
+                          "pdf_url": f"https://arxiv.org/pdf/2401.{qhash}{i}" if self.with_pdf else ""},
             ))
         return out
 

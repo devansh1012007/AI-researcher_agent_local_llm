@@ -188,6 +188,59 @@ CREATE TABLE IF NOT EXISTS source_versions (
     observed_at TEXT,
     data TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS hypotheses (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    status TEXT,
+    domain TEXT,
+    version INTEGER DEFAULT 1,
+    alternative_of TEXT DEFAULT '',
+    data TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS hypothesis_versions (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    hypothesis_id TEXT NOT NULL,
+    version INTEGER,
+    data TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS assumptions2 (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    kind TEXT,
+    status TEXT,
+    opportunity_id TEXT DEFAULT '',
+    data TEXT NOT NULL
+);
+-- note: hypothesis_id lives inside the JSON payload; filter via list+filter
+-- or add an indexed column in _migrate if query volume demands it.
+CREATE TABLE IF NOT EXISTS research_questions (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    gap_ref TEXT,
+    data TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS methodologies (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    hypothesis_id TEXT NOT NULL,
+    tier TEXT,
+    data TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS experiments (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    hypothesis_id TEXT NOT NULL,
+    status TEXT,
+    risk_level TEXT,
+    data TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS experiment_results (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    experiment_id TEXT NOT NULL,
+    data TEXT NOT NULL
+);
 """
 
 

@@ -29,7 +29,14 @@ def load_tasks(path: Path) -> list[dict]:
 
 
 def run_offline(task: dict, cfg: AppConfig):
-    """Deterministic offline run through fakes."""
+    """Deterministic offline run through fakes, in an ISOLATED fresh workspace.
+
+    Project ids derive from the question, so reruns would otherwise reopen a
+    stale DB where per-process ID counters collide with old rows.
+    """
+    import tempfile as _t
+    fresh = _t.mkdtemp(prefix="gar_eval_")
+    cfg.storage.data_dir = str(Path(fresh) / "data")
     from conftest import OfflineOrchestrator
     from research_engine.pipeline.routing import ProviderRegistry
     from fakes import FakeAcademicProvider, FakeSearchProvider

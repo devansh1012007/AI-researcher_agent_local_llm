@@ -63,6 +63,14 @@ class SourceType(str, Enum):
     DOCUMENTATION = "documentation"
     SEARCH_RESULT = "search_result"
     OTHER = "other"
+    # --- Phase 3: first-hand provenance, distinguished from web sources (#59) ---
+    EXPERIMENT_RESULT = "experiment_result"
+    USER_OBSERVATION = "user_observation"
+    USER_INTERVIEW = "user_interview"
+    SURVEY_RESULT = "survey_result"
+    PROTOTYPE_RESULT = "prototype_result"
+    SIMULATION_RESULT = "simulation_result"
+    INTERNAL_DATA = "internal_data"
 
 
 # Tier 1 primary ... Tier 5 unknown/low. Prior about quality, NOT proof of correctness.
@@ -136,6 +144,48 @@ class Severity(str, Enum):
     LOW = "low"
     MEDIUM = "medium"
     HIGH = "high"
+
+
+# --- Phase 3: reasoning lifecycle enums ---
+
+class HypothesisState(str, Enum):
+    PROPOSED = "PROPOSED"
+    UNDER_REVIEW = "UNDER_REVIEW"
+    NEEDS_EVIDENCE = "NEEDS_EVIDENCE"
+    REFINED = "REFINED"
+    READY_FOR_TEST = "READY_FOR_TEST"
+    TESTING = "TESTING"
+    SUPPORTED = "SUPPORTED"
+    WEAKLY_SUPPORTED = "WEAKLY_SUPPORTED"
+    CONTRADICTED = "CONTRADICTED"
+    FALSIFIED = "FALSIFIED"
+    ABANDONED = "ABANDONED"
+    SUPERSEDED = "SUPERSEDED"
+
+
+HYPOTHESIS_STATES = [s.value for s in HypothesisState]
+
+HYPOTHESIS_TYPES = [
+    "DESCRIPTIVE", "CORRELATIONAL", "CAUSAL", "MECHANISTIC", "PREDICTIVE",
+    "COMPARATIVE", "ENGINEERING", "MARKET", "CUSTOMER", "BUSINESS_MODEL",
+    "DISTRIBUTION", "WILLINGNESS_TO_PAY",
+]
+
+# qualitative evidence stances (spec #62) — no fake Bayes
+EVIDENCE_STANCES = [
+    "strongly_supports", "moderately_supports", "weakly_supports",
+    "neutral", "weakly_contradicts", "strongly_contradicts",
+]
+
+# startup validation evidence hierarchy (spec #66): behavioral > stated (spec #102)
+VALIDATION_EVIDENCE_HIERARCHY = {
+    "casual_opinion": 0.1,
+    "survey_intention": 0.3,
+    "interview_evidence": 0.5,
+    "prototype_usage": 0.7,
+    "repeated_behavioral_usage": 0.9,
+    "payment": 1.0,
+}
 
 
 class StopReason(str, Enum):

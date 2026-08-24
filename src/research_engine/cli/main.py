@@ -391,6 +391,251 @@ def cmd_focus_branch(args):
                   f"It will be prioritized next run.[/green]")
 
 
+# ---------------------------------------------------------------------------
+# Phase 3 commands
+# ---------------------------------------------------------------------------
+
+def _load3(args):
+    cfg, orch, graph = _load2(args)
+    from research_engine.storage.reasoning_repos import ReasoningRepos
+    return cfg, orch, ReasoningRepos(orch.db)
+
+
+def cmd_hypotheses(args):
+    from research_engine.reasoning.hypothesis_engine import rank_hypotheses
+    _cfg, orch, rrepos = _load3(args)
+    ranked = rank_hypotheses(orch.repos, rrepos, orch.project.id,
+                             objective=args.objective)
+    if not ranked:
+        console.print("No hypotheses yet.")
+        return
+    t = Table(title=f"Hypothesis Portfolio (objective={args.objective})")
+    for col in ("rank", "id", "score", "conf", "status", "type", "title"):
+        t.add_column(col)
+    for i, r in enumerate(ranked[:20], 1):
+        h = r["hypothesis"]
+        t.add_row(str(i), h.id, f"{r['rank_score']:.3f}", f"{h.confidence:.2f}",
+                  h.status, h.type[:8], h.title[:60])
+    console.print(t)
+
+
+def cmd_generate_hypotheses(args):
+    _cfg, orch, rrepos = _load3(args)
+    from research_engine.reasoning.pipeline import ReasoningPipeline
+    pipe = ReasoningPipeline(orch.repos, rrepos, orch.router.reasoning, orch.registry)
+    if orch.project.mode == "startup":
+        try:
+            from research_engine.storage.graph_store import GraphStore
+            from research_engine.intelligence.startup import StartupIntelligence
+            si = StartupIntelligence(orch.repos, GraphStore(orch.db))
+            opps = si.discover_opportunities(orch.project.id)
+            if not opps:
+                console.print("No opportunity candidates found to derive hypotheses from.")
+                return
+            for opp in opps:
+                res = pipe.run_business_hypotheses(orch.project.id, opp)
+                for hh in res["hypotheses"]:
+                    console.print(f"[cyan]{hh['id']}[/cyan] [{hh['type']}] {hh['title']}")
+        except Exception as exc:
+            console.print(f"[red]generation failed:[/red] {exc}")
+        return
+    summary = pipe.run_for_project(orch.project.id, mode=orch.project.mode,
+                                   max_gaps=args.gaps)
+    for r in summary["ranked"]:
+        console.print(f"[cyan]{r['id']}[/cyan] score={r['score']:.3f} "
+                      f"conf={r['confidence']:.2f} {r['title']}")
+
+
+def cmd_show_hypothesis(args):
+    _cfg, orch, rrepos = _load3(args)
+    h = rrepos.hypotheses.get(args.hypothesis_id)
+    if h is None:
+        console.print("[red]Hypothesis not found.[/red]")
+        return
+    versions = rrepos.hypothesis_versions.history(orch.project.id, h.id)
+    console.print(f"[bold]{h.id}[/bold] [{h.status}] v{h.version} type={h.type} "
+                  f"origin={h.origin}:{','.join(h.origin_refs)}")
+    console.print(f"  {h.statement}")
+    if h.scores:
+        console.print("  scores:", {k: round(v, 2) for k, v in h.scores.items()
+                                    if isinstance(v, (int, float))})
+    console.print(f"  supporting: {h.supporting_evidence[:8]}")
+    console.print(f"  contradicting: {h.contradicting_evidence[:6]}")
+    console.print(f"  assumptions: {h.assumptions[:6]}")
+    console.print(f"  falsifiers: {h.falsification_conditions[:3]}")
+    if versions:
+        console.print(f"  history: {[(v.version, v.change_reason[:40]) for v in versions]}")
+
+
+def cmd_critique_hypothesis(args):
+    _cfg, orch, rrepos = _load3(args)
+    from research_engine.reasoning.hypothesis_engine import HypothesisCritic
+    critic = HypothesisCritic(orch.repos, rrepos, orch.router.reasoning)
+    h = rrepos.hypotheses.get(args.hypothesis_id)
+    if h is None:
+        console.print("[red]Hypothesis not found.[/red]")
+        return
+    result = critic.critique(orch.project.id, h)
+    console.print_json({"hypothesis_id": result["hypothesis_id"],
+                        "revision_needed": result["revision_needed"],
+                        "problems": result["problems"]})
+
+
+def cmd_compare_hypotheses(args):
+    _cfg, orch, rrepos = _load3(args)
+    hyps = [rrepos.hypotheses.get(hid) for hid in args.hypothesis_ids]
+    hyps = [h for h in hyps if h]
+    if len(hyps) < 2:
+        console.print("Need at least 2 hypothesis ids.")
+        return
+    a, b = hyps[0], hyps[1]
+    sup_a, sup_b = set(a.supporting_evidence), set(b.supporting_evidence)
+    console.print(f"[bold]{a.id} vs {b.id}[/bold]")
+    console.print(f"A: {a.statement[:140]}")
+    console.print(f"B: {b.statement[:140]}")
+    console.print(f"\nEvidence favoring A only: {sorted(sup_a - sup_b)[:8]}")
+    console.print(f"Evidence favoring B only: {sorted(sup_b - sup_a)[:8]}")
+    shared = sorted(sup_a & sup_b)
+    console.print(f"Evidence shared: {shared[:6]}")
+    console.print("\nDiscriminating test needed: an observation that changes support "
+                  "for exactly one — see each hypothesis's falsification conditions:")
+    console.print(f"  A falsified by: {a.falsification_conditions[:2]}")
+    console.print(f"  B falsified by: {b.falsification_conditions[:2]}")
+
+
+def cmd_methodology(args):
+    _cfg, orch, rrepos = _load3(args)
+    from research_engine.reasoning.methodology_designer import (MethodologyDesigner,
+                                                                MethodologyCritic)
+    h = rrepos.hypotheses.get(args.hypothesis_id)
+    if h is None:
+        console.print("[red]Hypothesis not found.[/red]")
+        return
+    designer = MethodologyDesigner(orch.repos, rrepos, orch.router.reasoning)
+    meths = designer.design(orch.project.id, h)
+    critic = MethodologyCritic()
+    for m in meths:
+        v = critic.inspect(orch.project.id, m, h)
+        console.print(f"\n[bold]{m.tier}[/bold] ({m.experiment_kind}) — critic: {v['verdict']}")
+        console.print(f"  objective: {m.objective[:110]}")
+        console.print(f"  indep={m.independent_vars[:1]} dep={m.dependent_vars[:1]}")
+        console.print(f"  baselines: {[b.get('tier') for b in m.baselines]}")
+        console.print(f"  success: {m.success_condition[:100]}")
+        if v["problems"]:
+            console.print(f"  [yellow]problems:[/yellow] {[p['type'] for p in v['problems']]}")
+
+
+def cmd_experiments(args):
+    _cfg, orch, rrepos = _load3(args)
+    exps = rrepos.experiments.all(orch.project.id, "hypothesis_id=?", (args.hypothesis_id,))
+    if not exps:
+        console.print("No experiments for this hypothesis.")
+        return
+    for x in exps:
+        gate = " [AWAITING APPROVAL]" if x.awaiting_approval else ""
+        console.print(f"[cyan]{x.id}[/cyan] [{x.status}] {x.risk_level}{gate}\n  {x.title}\n"
+                      f"  {x.decision_note[:150]}")
+
+
+def cmd_approve_experiment(args):
+    _cfg, orch, rrepos = _load3(args)
+    from research_engine.reasoning.result_ingestion import approve_experiment
+    try:
+        x = approve_experiment(rrepos, orch.project.id, args.experiment_id,
+                               approved=not args.reject, note=args.note or "")
+    except ValueError as exc:
+        console.print(f"[red]{exc}[/red]")
+        return
+    console.print(f"{x.id} -> [bold]{x.status}[/bold]")
+
+
+def cmd_add_result(args):
+    _cfg, orch, rrepos = _load3(args)
+    from research_engine.reasoning.result_ingestion import ResultIngestor
+    print("Enter observations one per line; empty line to finish:")
+    observations = []
+    while True:
+        try:
+            line = input("> ").strip()
+        except EOFError:
+            break
+        if not line:
+            break
+        observations.append(line)
+    metrics_raw = input("Metrics as JSON (optional, enter to skip): ").strip()
+    metrics = {}
+    if metrics_raw:
+        try:
+            metrics = json.loads(metrics_raw)
+        except json.JSONDecodeError:
+            console.print("[yellow]metrics ignored (invalid JSON)[/yellow]")
+    hint = input("Interpretation hint (supports/contradicts/inconclusive, optional): ").strip()
+    try:
+        res = ResultIngestor(orch.repos, rrepos).ingest(
+            orch.project.id, args.experiment_id, observations, metrics,
+            interpretation_hint=hint)
+    except ValueError as exc:
+        console.print(f"[red]{exc}[/red]")
+        return
+    console.print_json(res)
+
+
+def cmd_assumptions(args):
+    _cfg, orch, rrepos = _load3(args)
+    asm = sorted(rrepos.assumptions.all(orch.project.id), key=lambda a: -a.priority)
+    if not asm:
+        console.print("No tracked assumptions.")
+        return
+    t = Table(title="Assumptions (priority-ordered)")
+    for col in ("id", "kind", "priority", "status", "statement"):
+        t.add_column(col)
+    for a in asm[:25]:
+        t.add_row(a.id, a.kind, f"{a.priority:.2f}", a.status, a.statement[:80])
+    console.print(t)
+
+
+def cmd_next_action(args):
+    _cfg, orch, rrepos = _load3(args)
+    from research_engine.reasoning.decision_layer import DecisionLayer
+    dl = DecisionLayer(orch.repos, rrepos)
+    nx = dl.recommend_next(orch.project.id, objective=args.objective)
+    console.print(f"[bold]Headline:[/bold] {nx['headline']}")
+    for a in nx["actions"]:
+        console.print(f"- [cyan]{a['action']}[/cyan] → {a['target_id']} "
+                      f"(gain {a['expected_information_gain']:.2f}, cost {a['cost']})")
+        console.print(f"    {a['reason'][:150]}")
+    dr = dl.decision_readiness(orch.project.id)
+    console.print(f"\nDecision readiness: [bold]{dr['level']}[/bold] ({dr['score']})")
+    if dr["research_debt"]:
+        console.print("Research debt:")
+        for d in dr["research_debt"]:
+            console.print(f"  - {d}")
+
+
+def cmd_trace_hypothesis(args):
+    _cfg, orch, rrepos = _load3(args)
+    h = rrepos.hypotheses.get(args.hypothesis_id)
+    if h is None:
+        console.print("[red]Hypothesis not found.[/red]")
+        return
+    all_ev = {e.id: e for e in orch.repos.evidence.all(orch.project.id)}
+    chain = {"hypothesis": h.model_dump(), "trace": []}
+    for eid in list(dict.fromkeys(h.supporting_evidence + h.contradicting_evidence)):
+        ev = all_ev.get(eid)
+        if ev is None:
+            continue
+        src = orch.repos.sources.get(ev.source_id)
+        chain["trace"].append({
+            "evidence": eid, "stance": ("supports" if eid in h.supporting_evidence
+                                        else "contradicts"),
+            "claim": ev.claim_text[:120], "source": src.title[:60] if src else "",
+            "url": ev.source_url, "tier": ev.source_tier})
+    alternatives = [x.id for x in rrepos.hypotheses.all(orch.project.id)
+                    if x.alternative_of == h.alternative_of and x.id != h.id]
+    chain["alternative_hypotheses"] = alternatives
+    console.print_json(json.dumps(chain, default=str))
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(prog="research", description="GAR local research engine")
     parser.add_argument("--config", help="path to gar.yaml")
@@ -495,6 +740,70 @@ def main(argv=None):
     p.add_argument("project_id")
     p.add_argument("branch_id")
     p.set_defaults(fn=cmd_focus_branch)
+
+    # --- Phase 3 ---
+    p = sub.add_parser("hypotheses", help="ranked hypothesis portfolio")
+    p.add_argument("project_id")
+    p.add_argument("--objective", default="balanced",
+                   choices=["balanced", "novelty", "feasibility", "impact"])
+    p.set_defaults(fn=cmd_hypotheses)
+
+    p = sub.add_parser("generate-hypotheses", help="generate hypotheses from gaps/contradictions/opportunities")
+    p.add_argument("project_id")
+    p.add_argument("--gaps", type=int, default=2)
+    p.set_defaults(fn=cmd_generate_hypotheses)
+
+    p = sub.add_parser("hypothesis", help="show one hypothesis with full traceability")
+    p.add_argument("project_id")
+    p.add_argument("hypothesis_id")
+    p.set_defaults(fn=cmd_show_hypothesis)
+
+    p = sub.add_parser("critique-hypothesis", help="run the structured hypothesis critic")
+    p.add_argument("project_id")
+    p.add_argument("hypothesis_id")
+    p.set_defaults(fn=cmd_critique_hypothesis)
+
+    p = sub.add_parser("compare-hypotheses", help="head-to-head comparison of 2 hypotheses")
+    p.add_argument("project_id")
+    p.add_argument("hypothesis_ids", nargs=2)
+    p.set_defaults(fn=cmd_compare_hypotheses)
+
+    p = sub.add_parser("methodology", help="design + compare methodologies for a hypothesis")
+    p.add_argument("project_id")
+    p.add_argument("hypothesis_id")
+    p.set_defaults(fn=cmd_methodology)
+
+    p = sub.add_parser("experiments", help="experiments for a hypothesis")
+    p.add_argument("project_id")
+    p.add_argument("hypothesis_id")
+    p.set_defaults(fn=cmd_experiments)
+
+    p = sub.add_parser("approve", help="approve/reject an experiment at the human gate")
+    p.add_argument("project_id")
+    p.add_argument("experiment_id")
+    p.add_argument("--reject", action="store_true")
+    p.add_argument("--note", default="")
+    p.set_defaults(fn=cmd_approve_experiment)
+
+    p = sub.add_parser("add-result", help="ingest experiment results manually")
+    p.add_argument("project_id")
+    p.add_argument("experiment_id")
+    p.set_defaults(fn=cmd_add_result)
+
+    p = sub.add_parser("assumptions", help="assumption register (priority-ordered)")
+    p.add_argument("project_id")
+    p.set_defaults(fn=cmd_assumptions)
+
+    p = sub.add_parser("next", help="'what should I do next?' engine + decision readiness")
+    p.add_argument("project_id")
+    p.add_argument("--objective", default="balanced",
+                   choices=["balanced", "novelty", "feasibility", "impact"])
+    p.set_defaults(fn=cmd_next_action)
+
+    p = sub.add_parser("trace-hypothesis", help="hypothesis -> evidence -> source chain")
+    p.add_argument("project_id")
+    p.add_argument("hypothesis_id")
+    p.set_defaults(fn=cmd_trace_hypothesis)
 
     args = parser.parse_args(argv)
     args.fn(args)

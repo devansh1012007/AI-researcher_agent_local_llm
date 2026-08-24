@@ -478,6 +478,35 @@ class Orchestrator:
         from research_engine.reports.generator import ReportGenerator
         p = self.project
         self.sm.transition(p, ProjectState.SYNTHESIZING, "converged; generating reports")
+        # --- Phase 3: reasoning layer over the evidence graph ---
+        try:
+            from research_engine.storage.reasoning_repos import ReasoningRepos
+            from research_engine.reasoning.pipeline import ReasoningPipeline
+            if not hasattr(self, "_rrepos"):
+                self._rrepos = ReasoningRepos(self.db)
+            pipe = ReasoningPipeline(self.repos, self._rrepos,
+                                     self.router.reasoning, self.registry)
+            if p.mode == "startup":
+                opps = []
+                try:
+                    from research_engine.storage.graph_store import GraphStore
+                    from research_engine.intelligence.startup import StartupIntelligence
+                    si = StartupIntelligence(self.repos, GraphStore(self.db))
+                    opps = si.discover_opportunities(p.id)
+                    for opp in opps[:2]:
+                        pipe.run_business_hypotheses(p.id, opp)
+                except Exception as exc:
+                    log.warning("business hypotheses failed (isolated): %s", exc)
+            else:
+                rsum = pipe.run_for_project(p.id, mode=p.mode)
+                self.events.record(p.id, "hypotheses_generated", "reasoning",
+                                   metadata={"count": len(rsum.get("generated", [])),
+                                             "top": rsum.get("ranked", [])[:3]},
+                                   human_line=("Hypothesis engine: "
+                                               f"{len(rsum.get('generated', []))} competing hypotheses "
+                                               "generated from top gaps/contradictions"))
+        except Exception as exc:
+            log.warning("reasoning pipeline failed (isolated): %s", exc)
         gen = ReportGenerator(self.cfg, self.router.synthesis, self.repos, self.ws)
         generated = gen.generate_all(p)
         self.sm.transition(p, ProjectState.COMPLETED, f"reports: {', '.join(generated)}")

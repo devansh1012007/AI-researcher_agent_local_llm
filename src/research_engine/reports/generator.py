@@ -69,6 +69,30 @@ class ReportGenerator:
                     written.append(name)
             except Exception as exc:  # report failures never kill completion
                 log.warning("report %s failed (isolated): %s", name, exc)
+        # --- Phase 3 reasoning reports ---
+        try:
+            from research_engine.storage.reasoning_repos import ReasoningRepos
+            from research_engine.reports.reasoning_reports import ReasoningReports
+            if not hasattr(self, "_rrepos"):
+                self._rrepos = ReasoningRepos(self.repos.db)
+            rr3 = ReasoningReports(self.repos, self.ws, self._rrepos)
+            phase3 = [("hypotheses.md", rr3.write_hypotheses),
+                      ("assumptions.md", rr3.write_assumptions),
+                      ("decision_analysis.md", rr3.write_decision_analysis)]
+            if project.mode == "academic":
+                phase3 += [("methodology.md", rr3.write_methodology),
+                           ("experiment_plan.md", rr3.write_experiment_plan),
+                           ("evaluation_plan.md", rr3.write_evaluation_plan)]
+            else:
+                phase3 += [("validation_plan.md", rr3.write_validation_plan)]
+            for name, fn in phase3:
+                try:
+                    if fn(project.id):
+                        written.append(name)
+                except Exception as exc:
+                    log.warning("report %s failed (isolated): %s", name, exc)
+        except Exception as exc:
+            log.warning("phase3 reports unavailable (isolated): %s", exc)
         # structured exports for downstream tools (vector indexing, analysis)
         pid = project.id
         self.ws.export_jsonl("evidence",
