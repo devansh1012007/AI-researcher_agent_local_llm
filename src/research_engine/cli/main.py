@@ -186,6 +186,211 @@ def cmd_evidence(args):
                       f"  src: {e.source_title[:70]} {e.source_url[:60]}\n")
 
 
+# ---------------------------------------------------------------------------
+# Phase 2 commands
+# ---------------------------------------------------------------------------
+
+def _load2(args):
+    cfg = _cfg(args)
+    from research_engine.core.orchestrator import Orchestrator
+    orch = Orchestrator.load(cfg, _project_id_or_fail(cfg, args.project_id))
+    from research_engine.storage.graph_store import GraphStore
+    return cfg, orch, GraphStore(orch.db)
+
+
+def cmd_map(args):
+    """Literature/market map depending on mode."""
+    _cfg, orch, graph = _load2(args)
+    p = orch.project
+    if p.mode == "startup":
+        from research_engine.intelligence.startup import StartupIntelligence
+        si = StartupIntelligence(orch.repos, graph)
+        stats = si.extract_all(p.id)
+        console.print(f"[bold]Market map[/bold] ({p.id}):")
+        for kind, items in stats.items():
+            console.print(f"  {kind}: {len(items)}")
+        opps = si.discover_opportunities(p.id)
+        for o in opps:
+            br = si.score_opportunity(p.id, o)
+            console.print(f"\n[cyan]{o.id}[/cyan] score={br['total']:.2f} "
+                          f"(conf={o.confidence:.2f})")
+            console.print(f"  problem: {o.problem[:110]}")
+            console.print(f"  why_now: {[w[:60] for w in o.why_now]}")
+            console.print(f"  factors: {br['factors']}")
+    else:
+        from research_engine.intelligence.literature import LiteratureMapper
+        lm = LiteratureMapper(orch.repos, graph)
+        m = lm.build_map(p.id)
+        console.print(f"[bold]Literature map[/bold] ({p.id}): {m['n_papers']} papers parsed")
+        for c in m["clusters"]:
+            console.print(f"  cluster [{c['label']}]: {c['size']} papers; terms={c['top_terms'][:4]}")
+        console.print(f"\nFoundational: "
+                      + "; ".join(x["title"][:40] for x in m["foundational"][:3]))
+        console.print(f"Recent: " + "; ".join(x["title"][:40] for x in m["recent"][:3]))
+        console.print(f"Trend: {m['trend_observation']}")
+
+
+def cmd_branches(args):
+    from research_engine.reasoning.priority import BranchCoverageModel
+    _cfg, orch, _g = _load2(args)
+    plans = orch.repos.plans.all(orch.project.id)
+    plan = plans[-1] if plans else None
+    if not plan:
+        console.print("No research plan yet.")
+        return
+    coverage = BranchCoverageModel(orch.repos).compute(orch.project.id, plan.branches)
+    t = Table(title="Research Branches (coverage)")
+    for col in ("id", "importance", "coverage", "status", "ev", "gaps", "question"):
+        t.add_column(col)
+    for b in sorted(plan.branches, key=lambda x: -x.importance):
+        c = coverage.get(b.id, {})
+        t.add_row(b.id, f"{b.importance:.2f}", f"{c.get('coverage', 0):.2f}",
+                  b.status, str(c.get("evidence_count", 0)), str(c.get("gap_count", 0)),
+                  b.question[:70])
+    console.print(t)
+
+
+def cmd_papers(args):
+    _cfg, orch, graph = _load2(args)
+    papers = graph.entities(orch.project.id, "paper")
+    if not papers:
+        console.print("No paper entities yet.")
+        return
+    t = Table(title=f"Papers ({len(papers)})")
+    for col in ("id", "title", "venue", "published", "citations"):
+        t.add_column(col, overflow="fold")
+    for p in papers:
+        a = p.attributes
+        t.add_row(p.id, (a.get("title") or p.name)[:60], a.get("venue", "")[:20],
+                  str(a.get("published") or ""), str(a.get("citations", "")))
+    console.print(t)
+
+
+def cmd_competitors(args):
+    _cfg, orch, graph = _load2(args)
+    comps = graph.entities(orch.project.id, "competitor")
+    pains = graph.entities(orch.project.id, "pain_point")
+    prices = graph.entities(orch.project.id, "price_observation")
+    signals = graph.entities(orch.project.id, "market_signal")
+    console.print(f"Competitors: {len(comps)} | Pain points: {len(pains)} | "
+                  f"Price observations: {len(prices)} | Market signals: {len(signals)}")
+    for e in prices:
+        a = e.attributes
+        console.print(f"  price: {a.get('amount_raw')} {a.get('currency')}/"
+                      f"{a.get('billing_period') or '?'} ({e.name[:30]})")
+    for s in signals[:10]:
+        console.print(f"  signal[{s.attributes.get('kind')}]: {e and ''}{s.name[:80]}")
+
+
+def cmd_opportunities(args):
+    _cfg, orch, graph = _load2(args)
+    from research_engine.intelligence.startup import StartupIntelligence
+    si = StartupIntelligence(orch.repos, graph)
+    opps = si.discover_opportunities(orch.project.id)
+    if not opps:
+        console.print("No opportunities discovered from current evidence.")
+        return
+    for o in opps:
+        br = si.score_opportunity(orch.project.id, o)
+        console.print(f"\n[bold cyan]{o.id}[/bold cyan] score={br['total']:.2f} conf={o.confidence:.2f}")
+        console.print(f"  segment:   {o.customer_segment}")
+        console.print(f"  problem:   {o.problem[:120]}")
+        console.print(f"  alt:       {o.current_alternative}")
+        console.print(f"  evidence:  {len(o.evidence_ids)} ids; why_now: {len(o.why_now)}")
+
+
+def cmd_ask(args):
+    _cfg, orch, graph = _load2(args)
+    from research_engine.memory.qa import GroundedQA
+    from research_engine.memory.retrieval import build_retriever
+    ret = build_retriever(_cfg, orch.repos)
+    n = ret.index_project(orch.project.id)
+    log = console.status if False else None
+    qa = GroundedQA(orch.repos, ret, provider=orch.router.reasoning)
+    r = qa.ask(orch.project.id, args.question)
+    console.print(qa.format_response(r))
+
+
+def cmd_trace_claim(args):
+    _cfg, orch, graph = _load2(args)
+    from research_engine.memory.qa import trace_claim
+    chain = trace_claim(orch.repos, args.claim_id)
+    console.print_json(json.dumps(chain, default=str))
+
+
+def cmd_verify_claim(args):
+    """Focused verification branch for one claim (spec #108)."""
+    _cfg, orch, graph = _load2(args)
+    from research_engine.models.research import SearchQuery
+    claim = orch.repos.claims.get(args.claim_id)
+    if claim is None:
+        console.print("[red]Claim not found.[/red]")
+        return
+    core = " ".join(claim.text.split()[:10])
+    queries = [f"{core} independent confirmation",
+               f"{core} criticism limitations",
+               f"{core} replication study"]
+    created = []
+    for qtext in queries:
+        q = SearchQuery(project_id=orch.project.id, text=qtext,
+                        reason=f"verification of {args.claim_id}",
+                        kind="contradiction", priority=0.9,
+                        expected_information_gain=0.85,
+                        iteration=orch.project.current_iteration + 1)
+        q.ensure_id()
+        orch.repos.queries.save(q)
+        created.append(q)
+    console.print(f"[green]Verification branch queued for {args.claim_id}.[/green] "
+                  f"Run 'research run {orch.project.id}' to execute:")
+    for q in created:
+        console.print(f"  + {q.text}")
+
+
+def cmd_snapshot(args):
+    _cfg, orch, _g = _load2(args)
+    from research_engine.memory.snapshots import SnapshotManager
+    sm = SnapshotManager(orch.ws)
+    m = sm.create(orch.repos, orch.project.id, label=args.label or "")
+    console.print(f"[green]{m.snapshot_id}[/green] at iteration {m.iteration}: {m.counts}")
+
+
+def cmd_diff(args):
+    _cfg, orch, _g = _load2(args)
+    from research_engine.memory.snapshots import iteration_diff
+    d = iteration_diff(orch.repos, orch.project.id,
+                       max(1, orch.project.current_iteration - 1),
+                       orch.project.current_iteration)
+    console.print_json(json.dumps(d, default=str))
+
+
+def cmd_replay(args):
+    _cfg, orch, _g = _load2(args)
+    events = orch.events.read_events()
+    it = None
+    for e in events:
+        if e["event"] == "iteration_begin":
+            it = e["metadata"].get("iteration")
+            console.rule(f"[bold]Iteration {it}")
+        elif it is not None and e["event"] in ("cycle_complete", "analysis_complete",
+                                               "adaptive_plan", "followup_queries_generated"):
+            meta = e.get("metadata", {})
+            summary = ", ".join(f"{k}={v}" for k, v in list(meta.items())[:5])
+            console.print(f"  {e['event']}: {summary}")
+
+
+def cmd_focus_branch(args):
+    _cfg, orch, _g = _load2(args)
+    b = orch.repos.branches.get(args.branch_id)
+    if b is None:
+        console.print("[red]Branch not found.[/red]")
+        return
+    b.importance = min(1.0, b.importance + 0.3)
+    b.priority = 1
+    orch.repos.branches.save(b)
+    console.print(f"[green]Boosted importance of '{b.question[:70]}' to {b.importance:.2f}. "
+                  f"It will be prioritized next run.[/green]")
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(prog="research", description="GAR local research engine")
     parser.add_argument("--config", help="path to gar.yaml")
@@ -236,6 +441,60 @@ def main(argv=None):
     p.add_argument("--search", default="", help="FTS query over claims+quotes")
     p.add_argument("--limit", type=int, default=20)
     p.set_defaults(fn=cmd_evidence)
+
+    # --- Phase 2 ---
+    p = sub.add_parser("map", help="literature map (academic) or market map (startup)")
+    p.add_argument("project_id")
+    p.set_defaults(fn=cmd_map)
+
+    p = sub.add_parser("branches", help="branch list with coverage scores")
+    p.add_argument("project_id")
+    p.set_defaults(fn=cmd_branches)
+
+    p = sub.add_parser("papers", help="paper entities in the research graph")
+    p.add_argument("project_id")
+    p.set_defaults(fn=cmd_papers)
+
+    p = sub.add_parser("competitors", help="competitors/pains/prices/signals (startup)")
+    p.add_argument("project_id")
+    p.set_defaults(fn=cmd_competitors)
+
+    p = sub.add_parser("opportunities", help="discover + score startup opportunities")
+    p.add_argument("project_id")
+    p.set_defaults(fn=cmd_opportunities)
+
+    p = sub.add_parser("ask", help="grounded Q&A over the project archive")
+    p.add_argument("project_id")
+    p.add_argument("question")
+    p.set_defaults(fn=cmd_ask)
+
+    p = sub.add_parser("trace-claim", help="claim -> evidence -> source chain")
+    p.add_argument("project_id")
+    p.add_argument("claim_id")
+    p.set_defaults(fn=cmd_trace_claim)
+
+    p = sub.add_parser("verify", help="queue a focused verification branch for a claim")
+    p.add_argument("project_id")
+    p.add_argument("claim_id")
+    p.set_defaults(fn=cmd_verify_claim)
+
+    p = sub.add_parser("snapshot", help="create a research snapshot")
+    p.add_argument("project_id")
+    p.add_argument("--label", default="")
+    p.set_defaults(fn=cmd_snapshot)
+
+    p = sub.add_parser("diff", help="diff between last two iterations")
+    p.add_argument("project_id")
+    p.set_defaults(fn=cmd_diff)
+
+    p = sub.add_parser("replay", help="replay the research process iteration by iteration")
+    p.add_argument("project_id")
+    p.set_defaults(fn=cmd_replay)
+
+    p = sub.add_parser("focus", help="boost a branch's priority for the next run")
+    p.add_argument("project_id")
+    p.add_argument("branch_id")
+    p.set_defaults(fn=cmd_focus_branch)
 
     args = parser.parse_args(argv)
     args.fn(args)

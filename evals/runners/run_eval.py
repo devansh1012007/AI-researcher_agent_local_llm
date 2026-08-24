@@ -62,10 +62,16 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--offline", action="store_true", help="deterministic offline run")
     ap.add_argument("--task", default=None, help="run a single task id")
-    ap.add_argument("--dataset", default=str(ROOT / "evals/datasets/golden_tasks.json"))
+    ap.add_argument("--dataset", default=None, help="defaults to all dataset files")
     args = ap.parse_args()
 
-    tasks = load_tasks(Path(args.dataset))
+    if args.dataset:
+        files = [Path(args.dataset)]
+    else:
+        files = sorted((ROOT / "evals/datasets").glob("*.json"))
+    tasks = []
+    for f in files:
+        tasks.extend(load_tasks(f))
     if args.task:
         tasks = [t for t in tasks if t["id"] == args.task]
 

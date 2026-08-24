@@ -246,6 +246,20 @@ class Orchestrator:
         self.sm.transition(p, ProjectState.VERIFYING, "extraction done")
         # claim consolidation includes quote verification already applied per-item
         new_claims, dup_claims = ev_worker.consolidate_claims(p.id, new_ev, it)
+        # --- Phase 2: attribute evidence/claims to branches via query lineage ---
+        q_branch = {}
+        for q in self.repos.queries.all(p.id):
+            if q.branch:
+                q_branch[q.id] = q.branch
+        for e in new_ev:
+            if e.branch:
+                continue
+            src = self.repos.sources.get(e.source_id)
+            for qid in (src.query_ids if src else []):
+                if qid in q_branch:
+                    e.branch = q_branch[qid]
+                    self.repos.evidence.save(e)
+                    break
         useful_by_query: dict[str, int] = {}
         for e in new_ev:
             src = self.repos.sources.get(e.source_id)
@@ -274,12 +288,64 @@ class Orchestrator:
         problem = self.repos.problems.all(p.id)[0]
         plan = self.repos.plans.all(p.id)
         plan = plan[-1] if plan else None
-        gaps = gap_detector.run(p.id, plan, problem, it)
+        gaps = gap_detector.run(p.id, plan, problem, it, mode=p.mode)
         con_detector = ContradictionDetector(self.router.reasoning, self.repos)
         contradictions = con_detector.run(p.id)
 
+        # --- Phase 2: graph + strength aggregation + adversarial analysis ---
+        from research_engine.pipeline.graph_builder import GraphBuilder
+        from research_engine.storage.graph_store import GraphStore
+        from research_engine.reasoning.evidence_quality import ClaimStrengthService
+        from research_engine.reasoning.adversarial import AdversarialEngine
+        from research_engine.reasoning.contradiction_analyzer import ContradictionAnalyzer
+        from research_engine.reasoning.priority import BranchCoverageModel
+
+        if not hasattr(self, "_graph"):
+            self._graph = GraphStore(self.db)
+        try:
+            gstats = GraphBuilder(self.repos, self._graph).rebuild(p.id)
+        except Exception as exc:  # graph problems never kill the loop
+            log.warning("graph build failed (isolated): %s", exc)
+            gstats = {}
+        ClaimStrengthService(self.repos).refresh(p.id)
+        adv_gaps = []
+        try:
+            _, adv_gaps = AdversarialEngine(self.repos).build_challenges(p.id)
+        except Exception as exc:
+            log.warning("adversarial analysis failed (isolated): %s", exc)
+        for g in adv_gaps:
+            if not any(x.description[:60] == g.description[:60]
+                       for x in self.repos.gaps.all(p.id)):
+                g.ensure_id()
+                self.repos.gaps.save(g)
+                gaps.append(g)
+        for con_id, assessment in ContradictionAnalyzer(self.repos).assess_all(p.id):
+            con = self.repos.contradictions.get(con_id)
+            if con is not None and assessment.verdict != "UNRESOLVED":
+                con.explanation = f"[{assessment.verdict}] {con.explanation}"[:400]
+                self.repos.contradictions.save(con)
+
+        # coverage snapshot on branches
+        if plan is not None:
+            coverage = BranchCoverageModel(self.repos).compute(p.id, plan.branches)
+            for b in plan.branches:
+                cov = coverage.get(b.id)
+                if cov:
+                    b.coverage_score = cov["coverage"]
+                    b.evidence_count = cov["evidence_count"]
+                    b.gap_count = cov["gap_count"]
+                    b.status = ("answered" if cov["answered"] else
+                                "partially_answered" if cov["weakly_answered"] else "open")
+                    self.repos.branches.save(b)
+
         metrics = self._compute_metrics(it)
         self.repos.metrics.save(metrics)
+        # research gain vs previous iteration
+        prev_metrics = [m for m in self.repos.metrics.all(p.id) if m.iteration == it - 1]
+        gain = self._research_gain(prev_metrics[0], metrics) if prev_metrics else None
+        metrics.gap_resolution_rate = round(
+            metrics.gaps_resolved / max(1, metrics.gaps_resolved + metrics.gaps_open), 3)
+
         decision = ConvergenceAnalyzer(self.cfg, self.router.reasoning).evaluate(p, self.budget, {
             "objective": problem.objective, "iteration": it,
             "total_evidence": self.repos.evidence.count(p.id, "status!='REJECTED'"),
@@ -293,10 +359,13 @@ class Orchestrator:
         self.events.record(p.id, "analysis_complete", "reasoning",
                            metadata={"gaps_open": len([g for g in gaps if not g.resolved]),
                                      "contradictions_new": len(contradictions),
+                                     "graph": gstats,
+                                     "research_gain": gain,
                                      "stop_decision": decision.stop_reason.value if decision.should_stop else "continue"},
                            human_line=(f"Gaps open: {len([g for g in gaps if not g.resolved])} "
                                        f"(high-priority: {high_gaps}) | Contradictions total: "
                                        f"{self.repos.contradictions.count(p.id)}\n"
+                                       + (f"Research gain this iteration: {gain:+d}\n" if gain is not None else "")
                                        + "\n".join(f"  GAP [{g.category.value}] {g.description[:100]}"
                                                    for g in sorted(gaps, key=lambda x: -x.importance)[:5])))
         p.budget.iterations_used = it
@@ -304,14 +373,23 @@ class Orchestrator:
             p.stop_reason = decision.stop_reason
             self.persist_checkpoint()
             if p.stop_reason in (StopReason.CONVERGED, StopReason.NO_HIGH_VALUE_GAPS):
-                self.sm.transition(p, ProjectState.CONVERGED, decision.rationale)
+                stop_expl = self._stop_explanation(gains_history=None, last_rationale=decision.rationale,
+                                                   high_gaps=high_gaps)
+                self.events.record(p.id, "stop_policy_applied", "orchestrator",
+                                   metadata={"explanation": stop_expl},
+                                   human_line=f"Stopping policy: {stop_expl}")
+                self.sm.transition(p, ProjectState.CONVERGED, stop_expl)
             else:
                 self.sm.transition(p, ProjectState.GENERATING_FOLLOWUPS, decision.rationale)
                 self.sm.transition(p, ProjectState.CONVERGED, "budget stop -> synthesis")
             return False
         if it >= (self.cfg.research.max_iterations):
             p.stop_reason = StopReason.MAX_ITERATIONS
-            self.sm.transition(p, ProjectState.CONVERGED, "max iterations reached")
+            expl = self._stop_explanation(None, "max iterations reached", high_gaps)
+            self.events.record(p.id, "stop_policy_applied", "orchestrator",
+                               metadata={"explanation": expl},
+                               human_line=f"Stopping policy: {expl}")
+            self.sm.transition(p, ProjectState.CONVERGED, expl)
             return False
         if it == 1:
             if not self._review_gate(ReviewGate.AFTER_FIRST_RESEARCH_CYCLE):
@@ -325,15 +403,54 @@ class Orchestrator:
         self.sm.transition(p, ProjectState.SEARCHING, f"iteration {p.current_iteration} begins")
         return True
 
+    @staticmethod
+    def _research_gain(prev, cur) -> int:
+        """Research gain per iteration (spec #88): supported claims + resolved gaps
+        + accepted evidence delta; diminishing returns become visible."""
+        new_ev_accepted = ((cur.evidence_created - cur.evidence_rejected)
+                           - (prev.evidence_created - prev.evidence_rejected))
+        new_claims = cur.new_claims_this_iter
+        gaps_resolved = max(0, cur.gaps_resolved - prev.gaps_resolved)
+        quality_uplift = max(0.0, cur.source_diversity_domains - prev.source_diversity_domains)
+        return int(round(new_claims * 2 + gaps_resolved * 2
+                         + max(0, new_ev_accepted) * 0.5 + quality_uplift))
+
+    def _stop_explanation(self, gains_history, last_rationale: str,
+                          high_gaps: int) -> str:
+        """Explicit, honest stop explanation (spec #106/#125)."""
+        if high_gaps > 0 and self.budget.exhausted():
+            return ("Research stopped due to budget exhaustion while "
+                    f"{high_gaps} high-priority gaps remain unresolved.")
+        if high_gaps == 0:
+            return ("Research stopped because no high-importance gaps remain open "
+                    "and recent iterations produced minimal new evidence.")
+        return f"Research stopped ({last_rationale}); {high_gaps} high-priority gaps remain."
+
     def _generate_followups(self, it: int) -> list:
-        """Create targeted follow-up queries from unresolved gaps + contradictions."""
+        """Adaptive planner decides what to research next (Phase 2 'what next?' engine)."""
         p = self.project
         plan = self.repos.plans.all(p.id)
         plan = plan[-1] if plan else None
         if plan is None:
             return []
-        qp = QueryPlannerWorker(self.router.reasoning, self.repos)
-        created = qp.run(p.id, plan, iteration=it, per_branch=3)
+        problem = self.repos.problems.all(p.id)[0]
+        budget = min(self.cfg.research.max_queries_per_iteration,
+                     self.budget.queries_left())
+        try:
+            from research_engine.reasoning.adaptive_planner import AdaptivePlanner
+            step = AdaptivePlanner(self.router.reasoning, self.repos).plan_next(
+                p.id, problem, plan, iteration=it, budget_queries=max(1, budget))
+            created = list(step.queries)
+            self.events.record(p.id, "adaptive_plan", "planning",
+                               metadata={"strategy": step.strategy, "reason": step.reason,
+                                         "queries": len(created)},
+                               human_line=(f"Strategy: {step.strategy} — {step.reason}\n"
+                                           + "\n".join(f"  + {q.text[:80]}" for q in created[:6])))
+        except Exception as exc:
+            log.warning("adaptive planner failed; falling back to legacy followups: %s", exc)
+            created = []
+            qp = QueryPlannerWorker(self.router.reasoning, self.repos)
+            created = qp.run(p.id, plan, iteration=it, per_branch=3)
         # add gap-recommended and contradiction follow-up queries directly
         from research_engine.models.research import SearchQuery
         for g in self.repos.gaps.all(p.id, "resolved=0 AND importance>=0.55", ()):
@@ -355,10 +472,6 @@ class Orchestrator:
                     q.ensure_id()
                     self.repos.queries.save(q)
                     created.append(q)
-        self.events.record(p.id, "followup_queries_generated", "planning",
-                           metadata={"count": len(created)},
-                           human_line=f"Follow-up queries generated: {len(created)}"
-                                      + ("".join(f"\n  + {q.text[:80]}" for q in created[:6])))
         return created
 
     def _phase_synthesize(self) -> None:

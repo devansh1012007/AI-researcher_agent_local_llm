@@ -181,6 +181,13 @@ CREATE TABLE IF NOT EXISTS falsification_tests (
     project_id TEXT NOT NULL,
     data TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS source_versions (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    source_id TEXT NOT NULL,
+    observed_at TEXT,
+    data TEXT NOT NULL
+);
 """
 
 

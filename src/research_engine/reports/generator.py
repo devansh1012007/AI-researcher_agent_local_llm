@@ -49,6 +49,26 @@ class ReportGenerator:
         if not log_path.exists():
             log_path.write_text(f"# Research Log — {project.id}\n")
             written.append("research_log.md")
+        # --- Phase 2 intelligence reports ---
+        from research_engine.reports.intelligence_reports import IntelligenceReports
+        ir = IntelligenceReports(self.repos, self.ws)
+        phase2 = [("evidence_map.md", ir.write_evidence_map),
+                  ("contradiction_report.md", ir.write_contradiction_report),
+                  ("research_timeline.md", ir.write_research_timeline)]
+        if project.mode == "academic":
+            phase2 += [("literature_map.md", ir.write_literature_map),
+                       ("methods_comparison.md", ir.write_method_comparison),
+                       ("benchmark_analysis.md", ir.write_benchmark_analysis)]
+        elif project.mode == "startup":
+            phase2 += [("market_map.md", ir.write_market_map),
+                       ("opportunity_map.md", ir.write_opportunity_map),
+                       ("validation_candidates.md", ir.write_validation_candidates)]
+        for name, fn in phase2:
+            try:
+                if fn(project.id):
+                    written.append(name)
+            except Exception as exc:  # report failures never kill completion
+                log.warning("report %s failed (isolated): %s", name, exc)
         # structured exports for downstream tools (vector indexing, analysis)
         pid = project.id
         self.ws.export_jsonl("evidence",

@@ -1,0 +1,44 @@
+{
+  "tasks": [
+    {
+      "id": "p2_literature_mapping",
+      "mode": "academic",
+      "question": "What are the main research directions in using LLMs for robotic manipulation planning?",
+      "phase2": "literature",
+      "expected_subquestions": [
+        "which methods combine language models with robot planning",
+        "what benchmarks evaluate llm manipulation"
+      ],
+      "quality_expectations": {
+        "min_citation_coverage": 0.9,
+        "min_quote_correctness": 0.95
+      }
+    },
+    {
+      "id": "p2_startup_opportunity",
+      "mode": "startup",
+      "question": "Find promising AI startup opportunities for small Indian businesses.",
+      "phase2": "startup",
+      "expected_subquestions": [
+        "what ai tools do small indian businesses need",
+        "which competitors serve small business ai needs in india"
+      ],
+      "expect_opportunity_pipeline": true,
+      "quality_expectations": {
+        "min_citation_coverage": 0.9
+      }
+    },
+    {
+      "id": "p2_adaptive_contradiction",
+      "mode": "academic",
+      "question": "Does scaling model size reliably improve reasoning performance?",
+      "phase2": "adaptive",
+      "expect_contradictions_possible": true,
+      "expect_adaptive_followups": true,
+      "quality_expectations": {
+        "min_quote_correctness": 0.95,
+        "min_citation_coverage": 0.85
+      }
+    }
+  ]
+}

@@ -68,7 +68,11 @@ class PaperCluster:
 
 def cluster_papers(papers: list[dict], threshold: float = 0.18,
                    max_clusters: int = 12) -> list[PaperCluster]:
-    """Greedy agglomerative clustering over title+abstract TF-IDF."""
+    """Greedy agglomerative clustering over title+abstract TF-IDF.
+
+    Uses centroid linkage (similarity vs cluster mean) to avoid the chaining
+    effect of single-linkage, which would merge everything into one blob.
+    """
     if not papers:
         return []
     texts = [(p.get("title", "") + " " + p.get("abstract", "")) for p in papers]
@@ -78,18 +82,30 @@ def cluster_papers(papers: list[dict], threshold: float = 0.18,
     vecs = [idx.vector(t) for t in toks]
 
     clusters: list[list[int]] = []
+    centroids: list[dict[str, float]] = []
+
+    def centroid_of(members: list[int]) -> dict[str, float]:
+        acc: dict[str, float] = {}
+        for m in members:
+            for t, v in vecs[m].items():
+                acc[t] = acc.get(t, 0.0) + v
+        n = len(members) or 1
+        return {t: v / n for t, v in acc.items()}
+
     for i, v in enumerate(vecs):
         best_j, best_sim = -1, 0.0
         for ci, members in enumerate(clusters):
-            sim = max(TfidfIndex.cosine(v, vecs[m]) for m in members)
+            sim = TfidfIndex.cosine(v, centroids[ci])
             if sim > best_sim:
                 best_sim, best_j = sim, ci
         if best_sim >= threshold and best_j >= 0:
             clusters[best_j].append(i)
+            centroids[best_j] = centroid_of(clusters[best_j])
         else:
             clusters.append([i])
-    clusters.sort(key=len, reverse=True)
-    clusters = clusters[:max_clusters]
+            centroids.append(dict(v))
+    order = sorted(range(len(clusters)), key=lambda ci: -len(clusters[ci]))[:max_clusters]
+    clusters = [clusters[ci] for ci in order]
 
     out = []
     for cid, members in enumerate(clusters):

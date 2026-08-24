@@ -30,12 +30,16 @@ class IndependenceVerdict:
 
 
 def classify_independence(ev_a: Evidence, ev_b: Evidence) -> IndependenceVerdict:
-    dom = lambda e: e.source_url.split("/")[0] if "/" in e.source_url else ""
+    def _domain(e: Evidence) -> str:
+        u = e.source_url or ""
+        u = re.sub(r"^https?://", "", u)
+        return u.split("/")[0]
+
     if not ev_a.source_url or not ev_b.source_url:
         return IndependenceVerdict("unknown", "missing source url")
     if ev_a.source_id == ev_b.source_id:
         return IndependenceVerdict("clearly_dependent", "same source")
-    da, db_ = dom(ev_a), dom(ev_b)
+    da, db_ = _domain(ev_a), _domain(ev_b)
     if da and da == db_:
         return IndependenceVerdict("clearly_dependent", f"same domain {da}")
     # same organization names in titles or shared DOI prefix hints

@@ -33,17 +33,24 @@ class EvalScores:
     queries_executed: int = 0
     wall_clock_seconds: float = 0.0
     errors: int = 0
+    # Phase 2
+    research_gain_by_iteration: list = field(default_factory=list)
+    research_gain_total: int = 0
+    gain_per_llm_call: float = 0.0
+    search_efficiency: float = 0.0
     notes: list[str] = field(default_factory=list)
 
     def summary(self) -> str:
         lines = [
             f"retrieval:   primary_ratio={self.primary_source_ratio:.2f} "
             f"domains={self.source_diversity_domains} accepted={self.sources_accepted} "
-            f"rejected={self.sources_rejected}",
+            f"rejected={self.sources_rejected} efficiency={self.search_efficiency:.2f}",
             f"evidence:    quote_ok={self.quote_correctness:.2f} dup_rate={self.duplicate_rate:.2f} "
             f"citation_coverage={self.citation_coverage:.2f}",
             f"research:    subq_cov={self.subquestion_coverage:.2f} gaps={self.gaps_discovered} "
             f"(resolved {self.gaps_resolved}) contradictions={self.contradictions_found}",
+            f"adaptive:    gain_by_iter={self.research_gain_by_iteration} "
+            f"total={self.research_gain_total} gain/llm_call={self.gain_per_llm_call}",
             f"system:      llm_calls={self.llm_calls} queries={self.queries_executed} "
             f"errors={self.errors} secs={self.wall_clock_seconds:.0f}",
         ]
@@ -107,4 +114,22 @@ def score_project(repos: Repositories, project_id: str,
         s.llm_calls = last.llm_calls
     s.queries_executed = repos.queries.count(project_id, "executed=1")
     s.errors = repos.tasks.count(project_id, "status IN ('FAILED','DEAD')")
+
+    # --- Phase 2: research gain & search efficiency -------------------------
+    metrics_sorted = sorted(repos.metrics.all(project_id), key=lambda m: m.iteration)
+    gains = []
+    for prev, cur in zip(metrics_sorted, metrics_sorted[1:]):
+        gain = ((cur.new_claims_this_iter * 2)
+                + max(0, cur.gaps_resolved - prev.gaps_resolved) * 2
+                + max(0, (cur.evidence_created - cur.evidence_rejected)
+                        - (prev.evidence_created - prev.evidence_rejected)) * 0.5)
+        gains.append(round(gain))
+    if gains:
+        s.research_gain_by_iteration = gains
+        s.research_gain_total = sum(gains)
+        llm_cost = max(1, s.llm_calls)
+        s.gain_per_llm_call = round(s.research_gain_total / llm_cost, 3)
+    retrieved = s.sources_accepted + s.sources_rejected
+    s.search_efficiency = (round(s.sources_accepted / retrieved, 3)
+                           if retrieved else 0.0)
     return s

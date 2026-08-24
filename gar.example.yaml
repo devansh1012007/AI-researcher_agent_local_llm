@@ -51,5 +51,10 @@ search:
   academic_providers: [openalex, crossref, arxiv]
   semantic_scholar_api_key: ""
 
+embeddings:
+  provider: hashing             # hashing (no deps) | ollama | openai_compatible | none
+  model: nomic-embed-text       # used when provider is ollama/openai_compatible
+  base_url: ""                  # override endpoint
+
 storage:
   data_dir: research_data

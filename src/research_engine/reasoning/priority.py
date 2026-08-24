@@ -102,7 +102,7 @@ class BranchCoverageModel:
             domains = {e.source_url.split("/")[0] if "/" in e.source_url else e.source_url
                        for e in evs}
             diversity = min(1.0, len(domains) / 3) if evs else 0.0
-            freshness = _freshness(evs)
+            freshness = _freshness(evs) if evs else 0.0
             score = round(0.4 * answer_ratio + 0.3 * strength + 0.2 * diversity
                           + 0.1 * freshness, 3)
             open_gaps = [g for g in gaps_open if g.branch == b.id]

@@ -65,7 +65,8 @@ class HybridRetriever:
     YEAR_RE = re.compile(r"\b(19|20)\d{2}\b")
 
     def retrieve(self, project_id: str, question: str, top_k: int = 12,
-                 kind: str = "", after_year: int | None = None) -> RetrievalResult:
+                 kind: str = "", after_year: int | None = None,
+                 min_score: float = 0.18) -> RetrievalResult:
         result = RetrievalResult(query=question)
 
         # 1. keyword candidates via FTS5
@@ -106,10 +107,13 @@ class HybridRetriever:
             kw_component = 1.0 if eid in kw_ids else 0.0
             sem_component = sem_scores.get(eid, 0.0)
             tier_component = tier_w.get(ev.source_tier, 0.25)
-            score = (0.45 * kw_component + 0.35 * sem_component
-                     + 0.20 * tier_component * ev.confidence)
-            if score <= 0.01 and eid in sem_scores:
-                score = 0.05 * sem_scores[eid]
+            # text relevance is mandatory; source quality only modulates
+            relevance = max(kw_component, sem_component)
+            if relevance <= 0.0 or relevance < 0.05:
+                continue  # no genuine textual overlap -> irrelevant regardless of tier
+            score = (0.7 * relevance + 0.3 * tier_component * ev.confidence)
+            if score < min_score and not kw_component:
+                continue  # weak semantic-only hits below the floor are noise
             result.items.append(RetrievedItem(
                 entity_id=eid, score=round(score, 4),
                 components={"kw": kw_component, "sem": round(sem_component, 3),
