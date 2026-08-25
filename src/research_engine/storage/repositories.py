@@ -184,9 +184,26 @@ class EvidenceRepo(Repository):
         return rows[0] if rows else None
 
     def rejected_ratio(self, project_id: str) -> float:
+        """P0-04: this is the REJECTION rate (verification failures),
+        never to be reported as duplication."""
         total = self.count(project_id)
         rej = self.count(project_id, "status='REJECTED'")
         return rej / total if total else 0.0
+
+    def duplicate_ratio(self, project_id: str) -> float:
+        """True duplicate pressure: accepted evidences whose quote-hash was
+        already seen earlier in the corpus, over all accepted."""
+        rows = self.all(project_id, "status!='REJECTED'")
+        if not rows:
+            return 0.0
+        seen, dups = set(), 0
+        for e in sorted(rows, key=lambda x: x.iteration):
+            h = getattr(e, "quote_hash", "") or stable_hash(e.quote or "")
+            if h in seen:
+                dups += 1
+            else:
+                seen.add(h)
+        return dups / len(rows)
 
 
 class GapRepo(Repository):

@@ -377,6 +377,10 @@ class Orchestrator:
             "new_evidence": metrics.new_evidence_this_iter,
             "new_claims": metrics.new_claims_this_iter,
             "duplicate_rate": metrics.duplicate_rate,
+            "rejection_rate": metrics.rejection_rate,
+            "fetch_successes": max(0, metrics.documents_fetched - (prev_metrics[0].documents_fetched if prev_metrics else 0)),
+            "fetch_failures": max(0, metrics.documents_failed - (prev_metrics[0].documents_failed if prev_metrics else 0)),
+            "queries_executed": metrics.queries_this_iter,
             "high_importance_gaps": len([g for g in gaps if not g.resolved and g.importance >= 0.6]),
             "domains": metrics.source_diversity_domains,
         })
@@ -406,7 +410,10 @@ class Orchestrator:
                 self.sm.transition(p, ProjectState.CONVERGED, stop_expl)
             else:
                 self.sm.transition(p, ProjectState.GENERATING_FOLLOWUPS, decision.rationale)
-                self.sm.transition(p, ProjectState.CONVERGED, "budget stop -> synthesis")
+                label = ("provider degraded -> synthesis (results flagged, "
+                         "NOT converged)" if p.stop_reason == StopReason.PROVIDER_DEGRADED
+                         else "budget stop -> synthesis")
+                self.sm.transition(p, ProjectState.CONVERGED, f"{label}: {decision.rationale}"[:200])
             return False
         if it >= (self.cfg.research.max_iterations):
             p.stop_reason = StopReason.MAX_ITERATIONS
@@ -512,16 +519,31 @@ class Orchestrator:
             pipe = ReasoningPipeline(self.repos, self._rrepos,
                                      self.router.reasoning, self.registry)
             if p.mode == "startup":
-                opps = []
+                # P0-12: single canonical pipeline. No legacy fallback —
+                # a specialist failure is surfaced honestly (warning + event)
+                # instead of silently double-writing via the retired engine.
                 try:
-                    from research_engine.storage.graph_store import GraphStore
-                    from research_engine.intelligence.startup import StartupIntelligence
-                    si = StartupIntelligence(self.repos, GraphStore(self.db))
-                    opps = si.discover_opportunities(p.id)
-                    for opp in opps[:2]:
-                        pipe.run_business_hypotheses(p.id, opp)
+                    from research_engine.specialists.startup.service import (
+                        StartupResearchService)
+                    svc = StartupResearchService(cfg=self.cfg,
+                                                 data_dir=self.cfg.storage.data_dir)
+                    spipe = svc.run_full_pipeline(p.id)
+                    n_opp = spipe.get("discovery", {}).get("count", 0)
+                    n_tests = sum(len(pl.get("tests_designed", []))
+                                  for pl in spipe.get("validation", {}).get("plans", []))
+                    self._startup_pipeline_result = spipe
+                    self.events.record(
+                        p.id, "startup_pipeline_complete", "reasoning",
+                        metadata={"opportunities": n_opp, "validation_tests": n_tests},
+                        human_line=(f"Startup specialist: {n_opp} evidence-gated "
+                                    f"opportunities, {n_tests} validation tests designed"))
                 except Exception as exc:
-                    log.warning("business hypotheses failed (isolated): %s", exc)
+                    log.warning("startup pipeline failed (isolated): %s", exc)
+                    self.events.record(
+                        p.id, "startup_pipeline_failed", "reasoning",
+                        metadata={"error": str(exc)[:300]},
+                        human_line=(f"[WARN] startup specialist failed: "
+                                    f"{str(exc)[:160]}"))
             else:
                 rsum = pipe.run_for_project(p.id, mode=p.mode)
                 self.events.record(p.id, "hypotheses_generated", "reasoning",
@@ -562,7 +584,11 @@ class Orchestrator:
         m.new_evidence_this_iter = self.repos.evidence.count(
             p.id, f"iteration={it} AND status!='REJECTED'")
         m.new_claims_this_iter = self.repos.claims.count(p.id, f"iteration={it}")
-        m.duplicate_rate = round(self.repos.evidence.rejected_ratio(p.id), 3)
+        # P0-04: honest metric semantics — rejection ≠ duplication
+        m.rejection_rate = round(self.repos.evidence.rejected_ratio(p.id), 3)
+        m.duplicate_rate = round(self.repos.evidence.duplicate_ratio(p.id), 3)
+        m.queries_this_iter = len([q for q in self.repos.queries.all(p.id, "executed=1", ())
+                                   if q.iteration == it])
         m.new_evidence_rate = round(m.new_evidence_this_iter / max(1, cur_ev_total), 3)
         m.gap_resolution_rate = round(m.gaps_resolved / max(1, m.gaps_resolved + m.gaps_open), 3)
         parsed_sources = self.repos.sources.all(p.id, "status='PARSED'")

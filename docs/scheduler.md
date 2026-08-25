@@ -1,46 +1,33 @@
-# Scheduler Operations
+# Scheduler (stabilized)
 
-The scheduler is the only component that decides *when* work runs. It never
-calls an LLM and never touches project SQLite directly — runners do that.
-
-## Running it
-
-- Implicit: every service-layer job submission starts it on demand.
-- Explicit long-lived process: `research serve` (API) keeps one alive.
-- Workers: `platform.scheduler.worker_threads` (default 4).
-
-## Configuration (gar.yaml)
-
-```yaml
-platform:
-  profile: balanced        # minimal|balanced|high_memory|cpu_only|offline
-  scheduler:
-    max_jobs: 1            # concurrent research jobs
-    worker_threads: 4
-    lease_seconds: 120
-    heartbeat_seconds: 15
-    profile_caps:          # per-resource-profile concurrency
-      NETWORK_LIGHT: 5
-      LLM_LARGE: 1
-      EXPERIMENT_HEAVY: 1
-```
-
-## Inspecting
+## Ownership model (INV-001/002)
 
 ```
-research jobs                       # queue visibility (#107)
-research jobs --status RUNNING
-research job <job_id>               # detail incl. tasks/attempts/error class
-research job-control pause|resume|cancel <job_id>
-research job-control retry <task_id>
+claim_next_task(worker, profiles, lease_s)
+  -> status=RUNNING, attempts+=1   # attempts IS the fencing token
+  -> lease_expires_at = now+lease
+
+during execution:
+  renewal thread heartbeats every min(heartbeat_seconds, lease/3)
+  -> heartbeat(task, worker, fence) renews lease or flags lost ownership
+
+terminal write:
+  finish_task(..., fence) requires (worker_id, fence, status∈{CLAIMED,RUNNING})
+  mismatch -> StaleTaskOwner raised + scheduler_stale_writes_rejected metric
+
+pause:
+  release_task(worker, fence) -> QUEUED (ownership-checked)
 ```
 
-## Failure semantics
+A live worker can never have its task stolen: renewal runs INSIDE execution.
+A dead worker's lease expires and is reclaimed; its late writes are rejected
+loudly with expected vs received fence in the log record
+(`STALE_WRITER_REJECTED`).
 
-| Error class | Retry? | Notes |
-|-------------|--------|-------|
-| NETWORK     | yes, backoff+jitter | transient |
-| RATE_LIMIT  | yes, long backoff   | respects provider cooldown |
-| MODEL       | yes, short backoff  | empty/invalid output |
-| DATABASE    | yes, fast retry     | lock contention |
-| AUTH/PARSING/SCHEMA/SECURITY/USER | never | fail into dead-letter |
+## Job finalization
+Event-driven `_advance_one(job)` after every task completion; idle poll is an
+optimization only. Terminal job statuses are absorbing at the SQL layer.
+
+## Failure drills covered
+kill -9 mid-task → reclaim exactly once; pause during run → fenced release;
+cancel while queued → fenced drop; double-finish → second raises.

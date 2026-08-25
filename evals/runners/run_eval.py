@@ -28,6 +28,113 @@ def load_tasks(path: Path) -> list[dict]:
     return json.loads(path.read_text())["tasks"]
 
 
+def _startup_gates(task: dict, orch) -> list[str]:
+    """Phase 5 startup-specific quality gates (spec #79-81)."""
+    failures: list[str] = []
+    pid = orch.project.id
+    repos = orch.repos
+
+    if task.get("expect_opportunity_pipeline"):
+        if not hasattr(orch, "_srepos") or True:
+            try:
+                from research_engine.specialists.startup.repos import get_startup_repos
+                srepos = get_startup_repos(orch)
+            except Exception:
+                srepos = None
+        opps = list(repos.opportunities.all(pid))
+        if not opps and (srepos is None or not srepos.markets.all(pid)):
+            failures.append("no_opportunities_discovered")
+
+    if task.get("expect_business_hypotheses"):
+        from research_engine.storage.reasoning_repos import ReasoningRepos
+        rr = ReasoningRepos(orch.db)
+        startup_hyps = [h for h in rr.hypotheses.all(pid)
+                        if getattr(h, "domain", "") == "startup"]
+        if not startup_hyps:
+            failures.append("no_business_hypotheses")
+
+    if task.get("expect_startup_report_sections"):
+        n = int(task["expect_startup_report_sections"])
+        report = Path(getattr(orch.ws, "reports", Path("/nonexistent"))) / \
+            "startup_research.md"
+        if not report.exists():
+            failures.append("startup_report_missing")
+        else:
+            import re as _re
+            found = len(_re.findall(r"^## \d+\.", report.read_text(encoding="utf-8"),
+                                    _re.M))
+            if found < n:
+                failures.append(f"startup_report_sections_{found}_of_{n}")
+
+    if task.get("expect_validation_tests_designed"):
+        from research_engine.storage.reasoning_repos import ReasoningRepos
+        rr = ReasoningRepos(orch.db)
+        if rr.experiments.count(pid) == 0:
+            failures.append("no_validation_tests_designed")
+
+    if task.get("expect_behavioral_uncertainty_named"):
+        from research_engine.storage.reasoning_repos import ReasoningRepos
+        from research_engine.specialists.startup.policies import (
+            CUSTOMER_BEHAVIOR_UNCERTAINTIES)
+        rr = ReasoningRepos(orch.db)
+        cats = {a.category for a in rr.assumptions.all(pid)}
+        if not (cats & CUSTOMER_BEHAVIOR_UNCERTAINTIES):
+            failures.append("behavioral_uncertainty_not_named")
+
+    if task.get("expect_market_size_conflict_visible"):
+        cons = [c.explanation for c in repos.contradictions.all(pid)]
+        sizes = Database  # noqa: F841  (flag lives on persisted size rows)
+        flagged = False
+        try:
+            from research_engine.specialists.startup.repos import get_startup_repos
+            for s in get_startup_repos(orch).market_sizes.all(pid):
+                if s.conflict_flag == "MARKET_SIZE_CONFLICT":
+                    flagged = True
+        except Exception:
+            pass
+        if not flagged and not any("NOT averaged" in c for c in cons):
+            failures.append("market_size_conflict_not_visible")
+
+    if task.get("expect_why_not_built_analysis"):
+        try:
+            from research_engine.storage.reasoning_repos import ReasoningRepos
+            from research_engine.specialists.startup.opportunities import (
+                OpportunityEngine)
+            eng = OpportunityEngine(repos, ReasoningRepos(orch.db), None, None)
+            opps = list(repos.opportunities.all(pid))
+            wnb = eng.why_not_built(pid, opps[0], {}) if opps else {}
+            if not wnb.get("explanations"):
+                failures.append("why_not_built_missing")
+        except Exception:
+            failures.append("why_not_built_error")
+
+    if task.get("expect_counterevidence_pair"):
+        try:
+            from research_engine.storage.reasoning_repos import ReasoningRepos
+            from research_engine.specialists.startup.opportunities import (
+                OpportunityEngine)
+            eng = OpportunityEngine(repos, ReasoningRepos(orch.db), None, None)
+            opps = list(repos.opportunities.all(pid))
+            pair = eng.counter_evidence_pair(pid, opps[0]) if opps else {}
+            if not pair.get("strongest_argument_against"):
+                failures.append("counterevidence_pair_missing")
+        except Exception:
+            failures.append("counterevidence_error")
+
+    if task.get("expect_speculative_labeling"):
+        opps = list(repos.opportunities.all(pid))
+        unevidenced = [o for o in opps if not o.evidence_ids]
+        high = [o for o in opps
+                if (o.score_breakdown or {}).get("gate", {}).get("priority") == "high"]
+        if unevidenced and not all(
+                "SPECULATIVE" in o.notes for o in unevidenced):
+            failures.append("speculative_not_labeled")
+        if len(high) > 2:
+            failures.append("overconfident_high_priority")
+
+    return failures
+
+
 def run_offline(task: dict, cfg: AppConfig):
     """Deterministic offline run through fakes, in an ISOLATED fresh workspace.
 
@@ -49,7 +156,8 @@ def run_offline(task: dict, cfg: AppConfig):
         reg.register_academic(n, FakeAcademicProvider(n=2))
     project = ResearchProject(id=project_id_from_question(task["question"]),
                               question_raw=task["question"], mode=task["mode"])
-    orch = OfflineOrchestrator(cfg, project, reg)
+    orch = OfflineOrchestrator(cfg, project, reg,
+                               startup_mode=(task["mode"] == "startup"))
     orch.repos.projects.save(orch.project)
     t0 = time.time()
     orch.run()
@@ -113,6 +221,10 @@ def main():
                 failures.append(f"lifecycle_state_{state}")
             if not getattr(orch, "ws", None) or                not any((orch.ws.reports).glob("*.md")):
                 failures.append("no_reports_generated")
+
+        # ---- Phase 5 startup gates (spec #79-81) -------------------------
+        failures += _startup_gates(task, orch)
+
         status = "PASS" if not failures else f"FAIL({','.join(failures)})"
         print(scores.summary())
         print(f"quality gates: {status}")

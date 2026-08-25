@@ -42,14 +42,20 @@ def scripted_llm() -> ScriptedLLM:
 class OfflineOrchestrator:
     """Orchestrator wired to offline fakes (scripted LLM, fake search, fake HTTP)."""
 
-    def __new__(cls, cfg, project, registry=None, llm=None, fail_urls=None):
+    def __new__(cls, cfg, project, registry=None, llm=None, fail_urls=None,
+                startup_mode: bool = False):
         from research_engine.core.orchestrator import Orchestrator
+
+        topics = project.question_raw.split()[:6] if (
+            startup_mode or getattr(project, "mode", "") == "startup") else None
 
         class _Impl(Orchestrator):
             def _make_document_processor(self):
                 from research_engine.pipeline.documents import DocumentProcessor
                 return DocumentProcessor(self.cfg, self.repos, self.ws,
-                                         transport=make_fake_transport(fail_urls=fail_urls or set()))
+                                         transport=make_fake_transport(
+                                             fail_urls=fail_urls or set(),
+                                             startup_topics=topics))
 
         orch = _Impl(cfg, project, registry)
         shared = llm if llm is not None else ScriptedLLM()

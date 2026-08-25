@@ -44,6 +44,12 @@ class Contradiction(Entity):
     source_quality_note: str = ""      # comparison of supporting source tiers
     follow_up_query: str = ""
     resolved: bool = False             # only user/resolution step sets this
+    # INVARIANT-009 (P0-08): both sides identified explicitly. Claim links
+    # may be empty ONLY alongside evidence-side links; fully-unlinked rows
+    # are malformed historical data (conflict_type=LEGACY_UNLINKED).
+    conflict_type: str = "DIRECT_CONTRADICTION"
+    evidence_a_ids: list[str] = Field(default_factory=list)
+    evidence_b_ids: list[str] = Field(default_factory=list)
 
     def ensure_id(self) -> None:
         super().ensure_id(self.PREFIX)

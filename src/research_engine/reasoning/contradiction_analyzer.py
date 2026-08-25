@@ -42,16 +42,31 @@ class ContradictionAnalyzer:
         self.repos = repos
 
     def assess(self, project_id: str, contradiction) -> ContradictionAssessment:
-        ev_a = [self.repos.evidence.get(e) for e in _claim_evidence(
-            self.repos, project_id, contradiction.claim_a_id)]
-        ev_b = [self.repos.evidence.get(e) for e in _claim_evidence(
-            self.repos, project_id, contradiction.claim_b_id)]
-        ev_a = [e for e in ev_a if e]
-        ev_b = [e for e in ev_b if e]
+        # INVARIANT-009: fall back to evidence-side links when the conflict
+        # carries no claim links (market-size conflicts store evidence ids).
+        def _side(claim_id: str, own_evidence_ids: list) -> list:
+            id_lists = [list(_claim_evidence(self.repos, project_id, claim_id))]
+            if not any(id_lists[0]) and own_evidence_ids:
+                id_lists = [list(own_evidence_ids)]
+            out = []
+            for ids in id_lists:
+                for eid in ids:
+                    ev = self.repos.evidence.get(eid)
+                    if ev is not None:
+                        out.append(ev)
+            return out
+
+        ev_a = _side(contradiction.claim_a_id,
+                     getattr(contradiction, "evidence_a_ids", []) or [])
+        ev_b = _side(contradiction.claim_b_id,
+                     getattr(contradiction, "evidence_b_ids", []) or [])
         dims: dict = {}
         dims["temporal"] = self._compare_dimension(ev_a, ev_b, lambda e: str(e.published_date or "")[:4])
         dims["geographic"] = self._compare_dimension(
             ev_a, ev_b, lambda e: _geo(e.claim_text + " " + e.source_title))
+        # metric/definition dimension (was read but never computed — latent bug)
+        dims["metric"] = self._compare_dimension(
+            ev_a, ev_b, lambda e: _metric(e.claim_text))
         dims["source_tier"] = {
             "a": min((e.source_tier for e in ev_a), default=5),
             "b": min((e.source_tier for e in ev_b), default=5)}
@@ -104,3 +119,8 @@ def _geo(text: str) -> str:
         if g in t:
             return g
     return ""
+
+
+def _metric(text: str) -> str:
+    m = _DIMENSION_KEYWORDS["metric"].search(text or "")
+    return m.group(0).lower() if m else ""

@@ -29,7 +29,7 @@ from research_engine.platform.errors import classify
 from research_engine.platform.events import DomainEvent, EventBus
 from research_engine.platform.metrics import GlobalMetrics, sample_resources
 from research_engine.platform.obs_logging import IncidentLog, platform_logger
-from research_engine.storage.platform_db import PlatformDB
+from research_engine.storage.platform_db import PlatformDB, StaleTaskOwner
 
 DEFAULT_PROFILES = {
     ResourceProfile.NETWORK_LIGHT: 5,
@@ -290,21 +290,26 @@ class PersistentScheduler:
                     if job is None:
                         self.db.finish_task(task.id, self._worker_id, ok=False,
                                             error="job missing",
-                                            error_category="USER")
+                                            error_category="USER",
+                                            fence=task.attempts)
                         current_task = None
                         continue
                     if job.status in (JobStatus.PAUSING, JobStatus.PAUSED):
-                        # release cleanly back to queue
-                        task.status = TaskStatus.QUEUED
-                        task.lease_expires_at = None
-                        self.db.update_task(task)
+                        # release cleanly back to queue (fenced)
+                        try:
+                            self.db.release_task(task.id, self._worker_id,
+                                                 fence=task.attempts)
+                        except Exception as exc:
+                            self.log.warn("release_rejected", task_id=task.id,
+                                          error=str(exc)[:120])
                         self._stop.wait(self.cfg.poll_interval)
                         continue
                     if job.is_terminal():
                         # cancelled while queued: drop the claim, never run
                         self.db.finish_task(task.id, self._worker_id, ok=False,
                                             error="job cancelled before start",
-                                            error_category="USER")
+                                            error_category="USER",
+                                            fence=task.attempts)
                         current_task = None
                         continue
                 current_task = task
@@ -317,29 +322,86 @@ class PersistentScheduler:
     def _execute(self, task: JobTask) -> None:
         t0 = time.time()
         runner = self._runners.get(task.type)
+        fence = task.attempts          # fencing token captured at claim
         self.metrics.incr("scheduler_tasks_started", type=task.type)
+        # INVARIANT-001: renew the lease FROM INSIDE execution so a live
+        # worker can never have its task stolen mid-run (BUG-01 fix). The
+        # renewal interval is derived from the lease, not operator memory.
+        hb_every = max(0.05, min(self.cfg.heartbeat_seconds,
+                                 self.cfg.lease_seconds / 3.0))
+        stop_renewal = threading.Event()
+        lost_ownership = threading.Event()
+
+        def _renew() -> None:
+            while not stop_renewal.wait(hb_every):
+                try:
+                    ok = self.db.heartbeat(task.id, self._worker_id,
+                                           self.cfg.lease_seconds, fence=fence)
+                except Exception as exc:
+                    self.log.warn("heartbeat_error", task_id=task.id,
+                                  error=str(exc)[:120])
+                    continue
+                if not ok:
+                    lost_ownership.set()
+                    self.log.warn("STALE_WRITER_DETECTED", task_id=task.id,
+                                  worker_id=self._worker_id, expected_fence=fence)
+                    return
+
+        renewal = threading.Thread(target=_renew, name=f"hb-{task.id[:12]}",
+                                   daemon=True)
+        if self.cfg.lease_seconds > 0:
+            renewal.start()
+        stale_rejected = False
         try:
             if runner is None:
                 raise RuntimeError(f"no runner registered for task type {task.type}")
             result = runner(task)
-            self.db.finish_task(task.id, self._worker_id, ok=True, result=result)
+            if lost_ownership.is_set():
+                # work finished but ownership was stolen mid-flight: refuse
+                # to write terminal state (INVARIANT-002)
+                raise StaleTaskOwner(task.id, self._worker_id, -1, fence,
+                                     reason="ownership lost during execution")
+            try:
+                self.db.finish_task(task.id, self._worker_id, ok=True,
+                                    result=result, fence=fence)
+            except StaleTaskOwner as exc:
+                stale_rejected = True
+                self.metrics.incr("scheduler_stale_writes_rejected",
+                                  type=task.type)
+                self.log.warn("STALE_WRITER_REJECTED", task_id=task.id,
+                              worker_id=self._worker_id, expected_fence=exc.expected_fence,
+                              received_fence=exc.received_fence, reason=exc.reason)
+                return
             self.metrics.observe("task_latency_ms", (time.time() - t0) * 1000,
                                  type=task.type)
             self.metrics.incr("scheduler_tasks_succeeded", type=task.type)
         except Exception as exc:
             cat = classify(exc)
-            self.db.finish_task(task.id, self._worker_id, ok=False,
-                                error=str(exc), error_category=cat.value)
-            self.metrics.incr("scheduler_tasks_failed", type=task.type,
-                              category=cat.value)
-            attempts_left = task.max_attempts - task.attempts
-            self.log.warn("task_failed", job_id=task.job_id, task_id=task.id,
-                          status=cat.value, error=str(exc),
-                          metadata={"attempts_left": max(0, attempts_left)})
-            if cat.value in ("AUTH", "SECURITY"):
-                self.incidents.record(task.job_id, task.type, str(exc)[:200],
-                                      f"{cat.value} failure")
+            try:
+                self.db.finish_task(task.id, self._worker_id, ok=False,
+                                    error=str(exc), error_category=cat.value,
+                                    fence=fence)
+            except StaleTaskOwner as sexc:
+                stale_rejected = True
+                self.metrics.incr("scheduler_stale_writes_rejected",
+                                  type=task.type)
+                self.log.warn("STALE_WRITER_REJECTED", task_id=task.id,
+                              worker_id=self._worker_id,
+                              expected_fence=sexc.expected_fence,
+                              received_fence=sexc.received_fence, reason=sexc.reason)
+            if not stale_rejected:
+                self.metrics.incr("scheduler_tasks_failed", type=task.type,
+                                  category=cat.value)
+                attempts_left = task.max_attempts - task.attempts
+                self.log.warn("task_failed", job_id=task.job_id, task_id=task.id,
+                              status=cat.value, error=str(exc),
+                              metadata={"attempts_left": max(0, attempts_left)})
+                if cat.value in ("AUTH", "SECURITY"):
+                    self.incidents.record(task.job_id, task.type, str(exc)[:200],
+                                          f"{cat.value} failure")
         finally:
+            stop_renewal.set()
+            renewal.join(timeout=2.0)
             # drive THIS job forward immediately — finalization must not
             # depend on idle-poll timing (crash-test determinism, spec #11)
             if task.job_id:

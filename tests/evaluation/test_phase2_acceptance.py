@@ -25,6 +25,18 @@ def _run(cfg, fake_registry, make_orchestrator, question, mode="academic"):
 
 
 class TestAdaptiveResearch:
+    # INVARIANT-006 note (stabilization): duplicate-rate now reflects TRUE
+    # quote duplication; the offline fake corpus is near-100% duplicated, so
+    # these planner tests raise the dup threshold to keep the loop running
+    # long enough to exercise follow-up generation. Saturation-stopping is
+    # covered by tests/invariants/test_convergence_semantics.py.
+    @pytest.fixture(autouse=True)
+    def _relax_dup_gate(self, cfg):
+        old = cfg.research.duplicate_rate_converged
+        cfg.research.duplicate_rate_converged = 0.98
+        yield
+        cfg.research.duplicate_rate_converged = old
+
     def test_branches_prioritized_and_covered(self, cfg, fake_registry, make_orchestrator):
         orch, p = _run(cfg, fake_registry, make_orchestrator,
                        "What methods exist for LLM-based robot manipulation?")

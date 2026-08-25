@@ -14,6 +14,7 @@ import logging
 from pydantic import BaseModel, Field
 
 from research_engine.models.enums import EVIDENCE_STANCES, HypothesisState
+from research_engine.reasoning.evidence_quality import classify_independence
 from research_engine.models.reasoning import (Assumption, Hypothesis,
                                               HypothesisVersion)
 from research_engine.prompts.registry import get_prompt
@@ -430,8 +431,30 @@ def score_hypothesis(repos: Repositories, rrepos: ReasoningRepos,
     sup = [all_ev[e] for e in h.supporting_evidence if e in all_ev]
     con = [all_ev[e] for e in h.contradicting_evidence if e in all_ev]
 
-    support = min(1.0, sum(tier_w.get(e.source_tier, 0.2) * e.confidence for e in sup) / 3)
-    opposition = min(1.0, sum(tier_w.get(e.source_tier, 0.2) for e in con) / 2)
+    # P0-09 (INVARIANT-007): quality-and-independence-aware support.
+    # best_single dominates; independent corroboration adds a CAPPED boost —
+    # ten tier-5 forum posts can never outvote one tier-1 study.
+    def _ev_weight(e):
+        from research_engine.pipeline.claim_support import SUPPORT_FACTOR
+        base = tier_w.get(e.source_tier, 0.2) * max(0.0, e.confidence)
+        return base * SUPPORT_FACTOR.get(getattr(e, "support_verdict", "") or "", 0.7)
+
+    if sup:
+        weights = [_ev_weight(e) for e in sup]
+        best_single = max(weights)
+        independents = 0
+        for i, a in enumerate(sup):
+            dependent = any(
+                classify_independence(a, b).label == "clearly_dependent"
+                for j, b in enumerate(sup) if i != j)
+            if not dependent:
+                independents += 1
+        corr_boost = min(0.35, 0.12 * max(0, independents - 1))
+        support = min(1.0, best_single + corr_boost)
+    else:
+        support = 0.0
+    opposition = min(1.0, max((_ev_weight(e) for e in con), default=0.0) * 1.5
+                     if con else 0.0)
     testability = 1.0 if h.predictions and h.falsification_conditions else \
         (0.5 if h.falsification_conditions else 0.15)
     falsifiability = min(1.0, len(h.falsification_conditions) * 0.4)

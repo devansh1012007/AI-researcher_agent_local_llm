@@ -8,6 +8,7 @@ import argparse
 import json
 import sys
 from pathlib import Path
+import pathlib
 
 from rich.console import Console
 from rich.table import Table
@@ -93,14 +94,14 @@ def _print_status(orch):
 
 
 def cmd_pause(args):
-    cfg = _cfg(args)
-    from research_engine.core.orchestrator import Orchestrator
-    from research_engine.models.enums import ProjectState
-    orch = Orchestrator.load(cfg, _project_id_or_fail(cfg, args.project_id))
-    orch.request_stop()
-    orch.sm.transition(orch.project, ProjectState.PAUSED, "user pause")
-    orch.persist_checkpoint()
-    console.print("[yellow]Paused.[/yellow] Resume with: research resume " + orch.project.id)
+    # P0-11: cooperative pause via the canonical service (no direct
+    # state-machine mutation from the interface layer)
+    ctx = _ctx4()
+    pid = args.project_id
+    stopped = ProjectService(ctx).pause(pid)
+    console.print(f"[yellow]Paused.[/yellow] "
+                  f"{'running job signalled' if stopped else 'no active job'}; "
+                  f"resume with: research resume {pid}")
 
 
 def cmd_resume(args):
@@ -203,20 +204,19 @@ def cmd_map(args):
     _cfg, orch, graph = _load2(args)
     p = orch.project
     if p.mode == "startup":
-        from research_engine.intelligence.startup import StartupIntelligence
-        si = StartupIntelligence(orch.repos, graph)
-        stats = si.extract_all(p.id)
+        # P0-12: canonical engine only — legacy StartupIntelligence
+        # discovery/scoring retired from all production paths.
+        from research_engine.specialists.startup.cli_glue import market_map_view
+        view = market_map_view(_svc4(), p.id)
         console.print(f"[bold]Market map[/bold] ({p.id}):")
-        for kind, items in stats.items():
-            console.print(f"  {kind}: {len(items)}")
-        opps = si.discover_opportunities(p.id)
-        for o in opps:
-            br = si.score_opportunity(p.id, o)
-            console.print(f"\n[cyan]{o.id}[/cyan] score={br['total']:.2f} "
-                          f"(conf={o.confidence:.2f})")
-            console.print(f"  problem: {o.problem[:110]}")
-            console.print(f"  why_now: {[w[:60] for w in o.why_now]}")
-            console.print(f"  factors: {br['factors']}")
+        for kind, n in view.get("extraction_counts", {}).items():
+            console.print(f"  {kind}: {n}")
+        for t in view.get("opportunities", []):
+            console.print(f"\n[cyan]{t['opportunity_id']}[/cyan] "
+                          f"score={t['total_score']} [{t['priority']}]")
+            console.print(f"  problem: {t['problem'][:110]}")
+        for gap in view.get("open_questions", [])[:5]:
+            console.print(f"  open: {gap[:100]}")
     else:
         from research_engine.intelligence.literature import LiteratureMapper
         lm = LiteratureMapper(orch.repos, graph)
@@ -283,20 +283,17 @@ def cmd_competitors(args):
 
 
 def cmd_opportunities(args):
-    _cfg, orch, graph = _load2(args)
-    from research_engine.intelligence.startup import StartupIntelligence
-    si = StartupIntelligence(orch.repos, graph)
-    opps = si.discover_opportunities(orch.project.id)
-    if not opps:
+    # P0-12: canonical specialist engine (legacy discover/score retired)
+    from research_engine.specialists.startup.cli_glue import opportunity_portfolio
+    _cfg, orch, _graph = _load2(args)
+    portfolio = opportunity_portfolio(_svc4(), orch.project.id)
+    if not portfolio:
         console.print("No opportunities discovered from current evidence.")
         return
-    for o in opps:
-        br = si.score_opportunity(orch.project.id, o)
-        console.print(f"\n[bold cyan]{o.id}[/bold cyan] score={br['total']:.2f} conf={o.confidence:.2f}")
-        console.print(f"  segment:   {o.customer_segment}")
-        console.print(f"  problem:   {o.problem[:120]}")
-        console.print(f"  alt:       {o.current_alternative}")
-        console.print(f"  evidence:  {len(o.evidence_ids)} ids; why_now: {len(o.why_now)}")
+    for t in portfolio:
+        console.print(f"\n[bold cyan]{t['opportunity_id']}[/bold cyan] "
+                      f"score={t['total_score']} [{t['priority']}]")
+        console.print(f"  problem: {t['problem'][:130]}")
 
 
 def cmd_ask(args):
@@ -424,18 +421,16 @@ def cmd_generate_hypotheses(args):
     from research_engine.reasoning.pipeline import ReasoningPipeline
     pipe = ReasoningPipeline(orch.repos, rrepos, orch.router.reasoning, orch.registry)
     if orch.project.mode == "startup":
+        # P0-12: canonical specialist path (legacy discovery retired here)
+        from research_engine.specialists.startup.cli_glue import (
+            ensure_business_hypotheses)
         try:
-            from research_engine.storage.graph_store import GraphStore
-            from research_engine.intelligence.startup import StartupIntelligence
-            si = StartupIntelligence(orch.repos, GraphStore(orch.db))
-            opps = si.discover_opportunities(orch.project.id)
-            if not opps:
-                console.print("No opportunity candidates found to derive hypotheses from.")
+            n = ensure_business_hypotheses(_svc4(), orch.project.id)
+            if n == 0:
+                console.print("No NEW business hypotheses created "
+                              "(already exist or no opportunities).")
                 return
-            for opp in opps:
-                res = pipe.run_business_hypotheses(orch.project.id, opp)
-                for hh in res["hypotheses"]:
-                    console.print(f"[cyan]{hh['id']}[/cyan] [{hh['type']}] {hh['title']}")
+            console.print(f"created {n} business hypotheses")
         except Exception as exc:
             console.print(f"[red]generation failed:[/red] {exc}")
         return
@@ -643,6 +638,254 @@ def _ctx4(args=None):
     return get_context()
 
 
+# ---------------------------------------------------------------------------
+# Phase 5: startup specialist commands (spec #76)
+# ---------------------------------------------------------------------------
+
+def _svc4():
+    """StartupResearchService wired to CLI context."""
+    from research_engine.specialists.startup.service import StartupResearchService
+    from research_engine.core.config import AppConfig
+    cfg = AppConfig.load()
+    return StartupResearchService(cfg=cfg, data_dir=cfg.storage.data_dir)
+
+
+def _latest_startup_project(explicit=""):
+    if explicit:
+        return explicit
+    from research_engine.services.research_service import ProjectService
+    projects = ProjectService(_ctx4()).list_projects()
+    startup = [p for p in projects if p.get("mode") == "startup"]
+    if not startup:
+        raise SystemExit("no startup projects found; run: research new --mode startup \"<question>\"")
+    return sorted(startup, key=lambda p: p.get("created_at", ""), reverse=True)[0]["id"]
+
+
+def cmd_startup_discover(args):
+    """Create (or reuse) a startup project for the market, then discover."""
+    svc = _svc4()
+    if args.project:
+        pid = args.project
+    else:
+        ctx = _ctx4()
+        from research_engine.services.research_service import ProjectCreate, ProjectService
+        ps = ProjectService(ctx)
+        existing = [p for p in ps.list_projects()
+                    if p.get("question_raw", "").strip().lower() ==
+                    args.market.strip().lower() and p.get("mode") == "startup"]
+        if existing:
+            pid = sorted(existing, key=lambda p: p["created_at"], reverse=True)[0]["id"]
+            console.print(f"[dim]reusing[/dim] {pid}")
+        else:
+            created = ps.create(ProjectCreate(question=args.market, mode="startup"))
+            pid = created["id"]
+            console.print(f"created [bold cyan]{pid}[/bold cyan] — running retrieval "
+                          "first is recommended; discovering on current evidence…")
+    result = svc.run_mode(pid, "OPPORTUNITY_DISCOVERY")
+    console.print(f"\n[bold]{result['count']} opportunities "
+                  f"(patterns: {', '.join(result['patterns_seen']) or 'none'})[/bold]")
+    for t in result["opportunities"]:
+        console.print(f"\n[bold cyan]{t['opportunity_id']}[/bold cyan] "
+                      f"score={t['total_score']} [{t['priority']}] — {t['portfolio_slot']}")
+        console.print(f"  {t['problem'][:130]}")
+
+
+def cmd_startup_research(args):
+    """Full specialist pipeline over a market question (deep run)."""
+    svc = _svc4()
+    pid = args.project
+    if not pid:
+        ctx = _ctx4()
+        from research_engine.services.research_service import ProjectCreate, ProjectService
+        created = ProjectService(ctx).create(
+            ProjectCreate(question=args.market, mode="startup"))
+        pid = created["id"]
+        console.print(f"created [bold cyan]{pid}[/bold cyan]")
+        if not args.no_run:
+            console.print("running live research first (network)…")
+            try:
+                orch = Orchestrator.load(svc.cfg, pid)
+                orch.run()
+            except Exception as exc:
+                console.print(f"[yellow]live run failed ({exc}); "
+                              "continuing with current evidence[/yellow]")
+    result = svc.run_full_pipeline(pid)
+    disc = result["discovery"]
+    val = result["validation"]
+    dil = result["diligence"]
+    console.print(f"\n[bold]Discovery:[/bold] {disc.get('count', 0)} gated opportunities")
+    console.print(f"[bold]Validation:[/bold] "
+                  f"{val.get('business_hypotheses_created', 0)} hypotheses, "
+                  f"{sum(len(p.get('tests_designed', [])) for p in val.get('plans', []))} tests")
+    console.print(f"[bold]Diligence:[/bold] readiness="
+                  f"{dil.get('readiness', {}).get('level')}, decision="
+                  f"{dil.get('recommendation', {}).get('decision')}")
+    console.print(f"\nNext: research report {pid}")
+
+
+def cmd_startup_customer(args):
+    pid = _latest_startup_project(args.project)
+    result = _svc4().run_mode(pid, "CUSTOMER_RESEARCH", segment=args.segment)
+    console.print(f"[bold]Customer research — {pid}[/bold]")
+    for s in result["segments"]:
+        console.print(f"\n[bold]{s['name']}[/bold] "
+                      f"({len(s['evidence_ids'])} evidences; buyer={s.get('buyer') or 'unknown'})")
+        for claim in s.get("pain_claims", [])[:2]:
+            console.print(f"  · {claim[:110]}")
+    console.print("\n[bold]Personas[/bold]")
+    for p in result["personas"]:
+        flag = "[yellow]SPECULATIVE[/yellow] " if p["speculative"] else ""
+        console.print(f"- {flag}{p['role']} | authority: {p['decision_authority'][:60]} "
+                      f"| tools: {', '.join(p['tools'][:4])}")
+    console.print("\n[bold]Pain ranking (behavioral hierarchy)[/bold]")
+    for pain in result["pain_points_ranked"][:6]:
+        console.print(f"- [{pain['evidence_class']}] {pain['statement'][:100]}")
+    wf = result.get("workflow_map") or {}
+    if wf.get("steps"):
+        console.print(f"\n[bold]Workflow around '{wf['topic']}'[/bold]")
+        for i, stp in enumerate(wf["steps"][:6], 1):
+            console.print(f"  {i}. {stp[:110]}")
+        for kind, hits in (wf.get("friction_points") or {}).items():
+            console.print(f"  friction[{kind}]: {hits[0][:90] if hits else ''}")
+
+
+def cmd_startup_competitors(args):
+    pid = _latest_startup_project(args.project)
+    result = _svc4().run_mode(pid, "COMPETITOR_RESEARCH")
+    ax = result["landscape_axes"]
+    console.print(f"[bold]Competitor landscape — {pid}[/bold]\n"
+                  f"axes: {ax['x_axis']} × {ax['y_axis']}\n")
+    for pr in result["profiles"]:
+        console.print(f"\n[bold cyan]{pr['name']}[/bold cyan] ({pr['classification']}) "
+                      f"model={pr['business_model'] or '?'} pricing={pr['pricing_summary'] or '?'}")
+        if pr["channels"]:
+            ev = ", ".join(f"{c}:{pr['channel_evidence'].get(c, '?')}"
+                           for c in pr["channels"][:4])
+            console.print(f"  channels: {ev}")
+        for wk in pr["weaknesses"][:2]:
+            console.print(f"  weakness: {wk[:110]}")
+        if pr["traction_note"]:
+            console.print(f"  traction: {pr['traction_note']}")
+    console.print("\n[bold]Pricing plans (raw preserved)[/bold]")
+    for pl in result["pricing_plans"]:
+        console.print(f"- {pl['company'] or '?'} `{pl['raw']}` [{pl['period']}] "
+                      f"({pl['note']})")
+    gaps = result.get("gaps_detected") or []
+    if gaps:
+        console.print("\n[bold]Gaps detected[/bold]")
+        for g in gaps:
+            console.print(f"- [{g['kind']}] {g['target']}: {g['reason'][:110]}")
+    dd = result.get("distribution_difficulty") or {}
+    console.print(f"\nDistribution verdict: [bold]{dd.get('verdict')}[/bold]")
+
+
+def cmd_startup_opportunity(args):
+    """Due diligence on one opportunity (or the top-ranked)."""
+    pid = _latest_startup_project(args.project)
+    result = _svc4().run_mode(pid, "OPPORTUNITY_DUE_DILIGENCE",
+                              opportunity_id=args.opportunity_id)
+    if result.get("verdict"):
+        console.print(result["verdict"])
+        return
+    sb = result["rubric"]
+    console.print(f"[bold]Due diligence — {result['opportunity_id']}[/bold]\n")
+    for dim, w in sb.get("weights", {}).items():
+        console.print(f"- {dim}: {sb['labels'].get(dim)} ({sb['factors'].get(dim)}) "
+                      f"— {sb['reasons'].get(dim, '')[:90]}")
+    rd = result["readiness"]
+    console.print(f"\nReadiness: [bold]{rd['level']}[/bold] "
+                  f"(coverage {rd['coverage']['covered']}/{rd['coverage']['total']}, "
+                  f"untested critical assumptions: {rd['critical_assumptions_untested']})")
+    rec = result["recommendation"]
+    console.print(f"\n[bold]{rec['decision'].upper()}[/bold] — {rec['recommendation_text']}")
+    console.print(f"for:     {rec['evidence_supporting'][:120]}")
+    console.print(f"against: {rec['evidence_against'][:120]}")
+    console.print(f"next:    {rec['best_next_action']}")
+    console.print(f"changes if: {rec['what_would_change_this_recommendation'][:140]}")
+
+
+def cmd_startup_validate(args):
+    pid = _latest_startup_project(args.project)
+    result = _svc4().run_mode(pid, "VALIDATION_PLANNING",
+                              opportunity_id=args.opportunity_id)
+    plans = result.get("plans") or []
+    if not plans:
+        console.print(result.get("note", "nothing to validate"))
+        return
+    for pl in plans:
+        console.print(f"\n[bold]{pl['hypotheses_covered']} hypotheses, "
+                      f"{pl['assumptions_created']} assumptions, "
+                      f"{len(pl['tests_designed'])} tests[/bold] "
+                      f"({pl['opportunity_id']})")
+        for t in pl["tests_designed"][:8]:
+            console.print(f"  [{t['test_type']}|cost={t['cost']}|gain={t['expected_information_gain']}] "
+                          f"{t['title'][:95]} ({t['critic_verdict']})")
+        for st in pl["staged_sequence"]:
+            console.print(f"\n  gate: {st['stage']}\n    {st['gate_rule'][:110]}")
+        unc = pl.get("biggest_behavioral_uncertainty")
+        if unc:
+            console.print(f"\n  [yellow]biggest uncertainty: {unc} — "
+                          "internet research cannot resolve this; validate in the field[/yellow]")
+
+
+def cmd_startup_compare(args):
+    pid = _latest_startup_project(args.project)
+    result = _svc4().run_mode(pid, "STARTUP_COMPARISON")
+    comp = result.get("comparison") or {}
+    matrix = comp.get("matrix", {})
+    if not matrix:
+        console.print(result.get("note"))
+        return
+    dims = ["pain_severity", "market_size", "competition_weakness",
+            "distribution", "timing", "evidence_strength", "total"]
+    header = f"{'opportunity':<42}" + "".join(f"{d[:12]:>14}" for d in dims)
+    console.print(header)
+    console.print("-" * len(header))
+    for oid, row in matrix.items():
+        cells = "".join(f"{row.get(d, 0):>14.3f}" for d in dims)
+        console.print(f"{row['name'][:40]:<42}{cells}")
+    console.print(f"\nleader by rubric: {comp.get('leader_by_rubric', '')}")
+    console.print(comp.get("tradeoffs_note", ""))
+
+
+def cmd_startup_assumptions(args):
+    pid = _latest_startup_project(args.project)
+    rows = _svc4().assumption_register(pid, args.opportunity_id)
+    if not rows:
+        console.print("no assumptions registered; run: research startup validate")
+        return
+    console.print("[bold]Assumption register (priority-ordered)[/bold]")
+    for a in rows:
+        console.print(f"\n- [{a['kind']}|{a['category']}|{a['status']}] "
+                      f"{a['statement'][:130]}")
+        console.print(f"  priority={a['priority']:.2f} "
+                      f"(imp={a['importance']} unc={a['uncertainty']} "
+                      f"impact={a['impact_of_failure']} ease={a['ease_of_testing']})")
+
+
+def cmd_startup_next(args):
+    """Highest-leverage next action for an opportunity (spec #68/#70)."""
+    pid = _latest_startup_project(args.project)
+    svc = _svc4()
+    dil = svc.run_mode(pid, "OPPORTUNITY_DUE_DILIGENCE",
+                       opportunity_id=args.opportunity_id)
+    rec = dil.get("recommendation") or {}
+    try:
+        view = svc.recommendation_view(pid, args.opportunity_id)
+        rec = view.get("recommendation", rec)
+        eff = view.get("efficiency")
+    except Exception:
+        pass
+    console.print(f"[bold]Recommendation:[/bold] {rec.get('decision')} — "
+                  f"{rec.get('recommendation_text', '')}")
+    console.print(f"[bold]Critical uncertainty:[/bold] {rec.get('critical_uncertainty')}")
+    console.print(f"[bold]Best next action:[/bold] {rec.get('best_next_action')}")
+    console.print(f"[bold]Changes if:[/bold] {rec.get('what_would_change_this_recommendation')}")
+    if eff and eff.get("new_evidence_per_query") is not None:
+        console.print(f"[dim]research efficiency: {eff['new_evidence_per_query']} "
+                      f"new evidence/query → {eff['verdict']}[/dim]")
+
+
 def cmd_jobs(args):
     from research_engine.models.job import TERMINAL_STATUSES
     ctx = _ctx4()
@@ -793,6 +1036,36 @@ def cmd_verify_archive(args):
     console.print(f"{status} engine={result.get('engine_version')} "
                   f"projects={result.get('project_ids')} "
                   f"corrupt={result.get('corrupt')}")
+
+
+def cmd_repair_startup(args):
+    """Deduplicate startup domain rows + complete identity indexes
+    (docs/data-repair.md). Auditable summary printed."""
+    from research_engine.specialists.startup.data_repair import repair_project
+    from research_engine.storage.database import Database
+
+    def _repair(pid: str) -> dict:
+        ws = pathlib.Path(AppConfig.load().storage.data_dir) / pid
+        db = Database(ws / "db.sqlite")
+        return repair_project(db)
+
+    if getattr(args, "all", False):
+        root = pathlib.Path(AppConfig.load().storage.data_dir)
+        pids = sorted(d.name for d in root.iterdir()
+                      if d.is_dir() and d.name.startswith("proj_"))
+    else:
+        pids = [args.project_id]
+    for pid in pids:
+        summary = _repair(pid)
+        console.print(f"[bold]{pid}[/bold]")
+        for t in summary["tables"]:
+            if t["removed"]:
+                console.print(f"  {t['table']}: {t['before']} -> {t['after']} "
+                              f"({t['removed']} removed)")
+        console.print(f"  legacy conflicts marked: "
+                      f"{summary.get('legacy_unlinked_conflicts_marked', 0)}; "
+                      f"indexes completed: {summary.get('indexes_completed', 0)}")
+    console.print("[green]repair complete[/green]")
 
 
 def cmd_doctor(args):
@@ -1040,6 +1313,64 @@ def main(argv=None):
 
     p = sub.add_parser("doctor", help="system health checks (db/storage/llm/scheduler)")
     p.set_defaults(fn=cmd_doctor)
+
+    q = sub.add_parser("repair-startup",
+                       help="dedupe startup entities by natural key (INV-003)")
+    q.add_argument("project_id", nargs="?", default="")
+    q.add_argument("--all", action="store_true",
+                   help="repair every project workspace")
+    q.set_defaults(fn=cmd_repair_startup)
+
+    # --- startup specialist (spec #76) ---
+    sp = sub.add_parser("startup", help="startup researcher commands")
+    ssub = sp.add_subparsers(dest="startup_cmd", required=True)
+
+    q = ssub.add_parser("discover", help="create/reuse a market project + discover opportunities")
+    q.add_argument("market", help="market question, quoted")
+    q.add_argument("--project", default="", help="existing project id to reuse")
+    q.set_defaults(fn=cmd_startup_discover)
+
+    q = ssub.add_parser("research", help="full specialist pipeline (discovery->validation->diligence)")
+    q.add_argument("market", help="market question, quoted")
+    q.add_argument("--project", default="", help="existing project id")
+    q.add_argument("--no-run", action="store_true", help="skip the live retrieval run")
+    q.set_defaults(fn=cmd_startup_research)
+
+    q = ssub.add_parser("customer", help="customer research for a segment")
+    q.add_argument("segment", nargs="?", default="", help="segment name filter")
+    q.add_argument("--project", default="", help="project id (default: latest startup)")
+    q.set_defaults(fn=cmd_startup_customer)
+
+    q = ssub.add_parser("competitors", help="competitor landscape, pricing, distribution")
+    q.add_argument("market", nargs="?", default="", help=argparse.SUPPRESS)
+    q.add_argument("--project", default="", help="project id (default: latest startup)")
+    q.set_defaults(fn=cmd_startup_competitors)
+
+    q = ssub.add_parser("opportunity", help="due diligence on one opportunity")
+    q.add_argument("opportunity_id", nargs="?", default="", help="opp_ id (default: top)")
+    q.add_argument("--project", default="")
+    q.set_defaults(fn=cmd_startup_opportunity)
+
+    q = ssub.add_parser("validate", help="assumptions -> ranked validation tests")
+    q.add_argument("opportunity_id", nargs="?", default="")
+    q.add_argument("--project", default="")
+    q.set_defaults(fn=cmd_startup_validate)
+
+    q = ssub.add_parser("compare", help="compare opportunities side by side")
+    q.add_argument("a", nargs="?", default="", help=argparse.SUPPRESS)
+    q.add_argument("b", nargs="?", default="", help=argparse.SUPPRESS)
+    q.add_argument("--project", default="")
+    q.set_defaults(fn=cmd_startup_compare)
+
+    q = ssub.add_parser("assumptions", help="ranked assumption register")
+    q.add_argument("opportunity_id", nargs="?", default="")
+    q.add_argument("--project", default="")
+    q.set_defaults(fn=cmd_startup_assumptions)
+
+    q = ssub.add_parser("next", help="highest-leverage next action")
+    q.add_argument("opportunity_id", nargs="?", default="")
+    q.add_argument("--project", default="")
+    q.set_defaults(fn=cmd_startup_next)
 
     args = parser.parse_args(argv)
     args.fn(args)

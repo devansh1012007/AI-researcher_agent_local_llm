@@ -17,6 +17,8 @@ from research_engine.core.config import AppConfig
 from research_engine.models.document import DocumentChunk
 from research_engine.models.enums import ClaimKind, EvidenceStatus, SourceType
 from research_engine.models.evidence import Claim, Evidence, NumericFact
+from research_engine.pipeline.claim_support import (
+    status_for_support as _status_for_support)
 from research_engine.prompts.registry import get_prompt
 from research_engine.providers.llm.base import LLMProvider
 from research_engine.storage.repositories import Repositories
@@ -156,6 +158,15 @@ class EvidenceWorker:
         for item in out.evidence:
             ok, why = verify_quote(item.quote, chunk.text)
             status = EvidenceStatus.EXTRACTED if ok else EvidenceStatus.REJECTED
+            # INVARIANT-005: quote existence is necessary, not sufficient.
+            # Verify the claim text is actually supported by the quoted
+            # passage before it can enter grounded synthesis.
+            support = None
+            if ok:
+                from research_engine.pipeline.claim_support import (
+                    verify_claim_support as _vcs)
+                support = _vcs(item.claim, item.quote)
+                status = _status_for_support(status, support.verdict)
             ev = Evidence(
                 project_id=project_id,
                 claim_text=item.claim.strip(),
@@ -180,12 +191,18 @@ class EvidenceWorker:
                 kind=_safe_kind(item.kind),
                 iteration=iteration,
                 validation_notes=why,
+                support_verdict=(support.verdict if support else ""),
+                support_score=(support.score if support else -1.0),
+                support_reasons=(support.reasons[:5] if support else []),
             )
             if not ev.claim_text:
                 continue
             if status == EvidenceStatus.REJECTED:
                 rejected += 1
-                log.info("rejected evidence (quote unverifiable): %s...", ev.claim_text[:60])
+                reason = ("quote unverifiable" if not ok
+                          else f"unsupported claim ({ev.support_verdict})")
+                log.info("rejected evidence (%s): %s...", reason,
+                         ev.claim_text[:60])
                 # store rejected items too — audit trail requires seeing what was thrown away
             ev.ensure_id()
             self.repos.evidence.save(ev)

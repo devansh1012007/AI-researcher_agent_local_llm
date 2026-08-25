@@ -32,6 +32,42 @@ def _rrepos(orch):
     return orch._rrepos
 
 
+class KnowledgeService:
+    """Aggregating facade over the knowledge services (single seam for
+    MCP/CLI callers that need cross-area operations)."""
+
+    def __init__(self, ctx):
+        self.ctx = ctx
+
+    @property
+    def evidence(self) -> "EvidenceService":
+        return EvidenceService(self.ctx)
+
+    @property
+    def hypotheses(self) -> "HypothesisService":
+        return HypothesisService(self.ctx)
+
+    @property
+    def reports(self) -> "ReportService":
+        return ReportService(self.ctx)
+
+    @property
+    def experiments(self) -> "ExperimentService":
+        return ExperimentService(self.ctx)
+
+    # canonical operations (P0-11: one authoritative path per action)
+    def design_methodology(self, project_id: str, hypothesis_id: str) -> list[dict]:
+        return self.hypotheses.design_methodology(project_id, hypothesis_id)
+
+    def generate_hypotheses(self, project_id: str) -> dict:
+        return self.hypotheses.generate(project_id)
+
+    def approve_experiment(self, project_id: str, experiment_id: str,
+                           approved: bool, note: str = "") -> dict:
+        return self.experiments.approve(project_id, experiment_id,
+                                        approved=approved, note=note)
+
+
 class EvidenceService:
     def __init__(self, ctx):
         self.ctx = ctx
@@ -124,6 +160,18 @@ class HypothesisService:
             raise NotFoundError("hypothesis", hyp_id)
         return json.loads(h.model_dump_json())
 
+    def design_methodology(self, project_id: str, hypothesis_id: str) -> list[dict]:
+        """Canonical methodology-design path (used by CLI and MCP; P0-05/BUG-06)."""
+        from research_engine.reasoning.methodology_designer import MethodologyDesigner
+        orch = _orch(self.ctx, project_id)
+        rr = _rrepos(orch)
+        h = rr.hypotheses.get(hypothesis_id)
+        if h is None:
+            raise NotFoundError("hypothesis", hypothesis_id)
+        designs = MethodologyDesigner(orch.repos, rr,
+                                      orch.router.reasoning).design(project_id, h)
+        return [json.loads(d.model_dump_json()) for d in designs]
+
     def generate(self, project_id: str) -> dict:
         """Run hypothesis generation on demand (competing sets, spec #8)."""
         from research_engine.core.orchestrator import Orchestrator
@@ -139,7 +187,7 @@ class HypothesisService:
 
     def history(self, project_id: str, hyp_id: str) -> list[dict]:
         orch = _orch(self.ctx, project_id)
-        versions = _rrepos(orch).versions.for_hypothesis(hyp_id)
+        versions = _rrepos(orch).hypothesis_versions.for_hypothesis(hyp_id)
         return [{"version": v.version, "change_reason": v.change_reason,
                  "confidence_delta": v.confidence_delta,
                  "created_at": v.created_at}
@@ -237,6 +285,15 @@ class ResearchJobFactory:
 
 
 class ExperimentService:
+    def approve(self, project_id: str, experiment_id: str, approved: bool,
+                note: str = "") -> dict:
+        """Canonical human-approval gate (P0-11): CLI/MCP/API all route here."""
+        from research_engine.reasoning.result_ingestion import approve_experiment
+        orch = _orch(self.ctx, project_id)
+        rr = _rrepos(orch)
+        updated = approve_experiment(rr, project_id, experiment_id,
+                                     approved=approved, note=note)
+        return json.loads(updated.model_dump_json())
     def __init__(self, ctx):
         self.ctx = ctx
 

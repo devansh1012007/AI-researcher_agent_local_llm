@@ -241,7 +241,87 @@ CREATE TABLE IF NOT EXISTS experiment_results (
     experiment_id TEXT NOT NULL,
     data TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS startup_markets (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    market_slug TEXT DEFAULT '',
+    data TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS market_sizes (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    market_id TEXT DEFAULT '',
+    data TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS startup_personas (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    data TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS jtbd (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    segment_id TEXT DEFAULT '',
+    data TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS alternatives (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    data TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS competitor_profiles (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    name_lower TEXT DEFAULT '',
+    classification TEXT DEFAULT '',
+    data TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS pricing_plans (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    competitor_name TEXT DEFAULT '',
+    data TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS distribution_channels (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    data TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS tech_shifts (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    data TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS opportunity_versions (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    opportunity_id TEXT DEFAULT '',
+    version INTEGER DEFAULT 1,
+    data TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS opportunity_decisions (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    opportunity_id TEXT DEFAULT '',
+    decision TEXT DEFAULT '',
+    data TEXT NOT NULL
+);
 """
+
+# INVARIANT-003: canonical entity identity is enforced by the database.
+# Each statement guarded separately so legacy DBs with pre-fix duplicates
+# keep working (index skipped + reported) until `repair-startup` runs.
+_STARTUP_UNIQUE_INDEXES = [
+    "CREATE UNIQUE INDEX IF NOT EXISTS ux_markets_slug ON startup_markets(project_id, market_slug)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS ux_sizes_evidence ON market_sizes(project_id, json_extract(data,'$.evidence_id'))",
+    "CREATE UNIQUE INDEX IF NOT EXISTS ux_personas_segment ON startup_personas(project_id, json_extract(data,'$.segment_id'))",
+    "CREATE UNIQUE INDEX IF NOT EXISTS ux_jtbd_segment ON jtbd(project_id, segment_id)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS ux_alternatives_name ON alternatives(project_id, LOWER(json_extract(data,'$.name')))",
+    "CREATE UNIQUE INDEX IF NOT EXISTS ux_competitors_name ON competitor_profiles(project_id, name_lower)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS ux_pricing_plan ON pricing_plans(project_id, competitor_name, json_extract(data,'$.price_raw'), json_extract(data,'$.billing_period'))",
+    "CREATE UNIQUE INDEX IF NOT EXISTS ux_channels_name ON distribution_channels(project_id, LOWER(json_extract(data,'$.name')))",
+    "CREATE UNIQUE INDEX IF NOT EXISTS ux_techshift_fp ON tech_shifts(project_id, LOWER(SUBSTR(json_extract(data,'$.description'),1,80)))",
+]
 
 
 class Database:
@@ -277,6 +357,20 @@ class Database:
             elif int(row["value"]) > SCHEMA_VERSION:
                 raise RuntimeError(f"DB schema v{row['value']} newer than engine schema v{SCHEMA_VERSION}")
         self._migrate()
+        self._ensure_startup_indexes()
+
+    def _ensure_startup_indexes(self) -> None:
+        """INVARIANT-003 backstop: unique natural-key indexes. On legacy DBs
+        still carrying duplicates, index creation fails — recorded (not fatal)
+        so `research repair-startup` can dedupe and complete the upgrade."""
+        self.skipped_unique_indexes: list[str] = []
+        c = self._conn()
+        for stmt in _STARTUP_UNIQUE_INDEXES:
+            try:
+                with c:
+                    c.execute(stmt)
+            except sqlite3.IntegrityError:
+                self.skipped_unique_indexes.append(stmt)
 
     def _migrate(self) -> None:
         """Lightweight additive migrations for DBs created by older engine versions."""
@@ -341,7 +435,9 @@ class Database:
 
     # -- FTS ---------------------------------------------------------------
     def fts_index(self, entity_id: str, project_id: str, kind: str, text: str) -> None:
+        # BUG-07 fix: one FTS row per entity — replace, never duplicate
         with self._conn() as c:
+            c.execute("DELETE FROM evidence_fts WHERE entity_id=?", (entity_id,))
             c.execute(
                 "INSERT INTO evidence_fts(entity_id, project_id, kind, text) VALUES(?,?,?,?)",
                 (entity_id, project_id, kind, text),

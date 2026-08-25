@@ -55,6 +55,10 @@ class Evidence(Entity):
     notes: list[str] = Field(default_factory=list)
     validation_notes: str = ""
     iteration: int = 0           # which research iteration produced it
+    # INVARIANT-005: claim-support verification (distinct from quote check)
+    support_verdict: str = ""       # ENTAILS..UNRELATED (pipeline/claim_support)
+    support_score: float = -1.0     # -1 = not assessed (legacy rows)
+    support_reasons: list[str] = Field(default_factory=list)
 
     def ensure_id(self) -> None:
         super().ensure_id(self.PREFIX)

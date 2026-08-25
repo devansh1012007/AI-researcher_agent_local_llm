@@ -85,7 +85,7 @@ class ScriptedLLM(LLMProvider):
             sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+|\n", chunk)
                          if len(s.strip()) > 40]
             evidence = []
-            for s in sentences[:2]:
+            for s in sentences[:12]:
                 quote = s if not self.hallucinate_quotes else \
                     "This sentence does not appear anywhere in the document at all."
                 evidence.append({
@@ -191,19 +191,43 @@ available on real hardware, and evaluation was limited to simulation environment
 
 
 def make_fake_transport(pages: dict[str, tuple[int, str]] | None = None,
-                        fail_urls: set[str] | None = None) -> httpx.MockTransport:
-    """pages: url -> (status, content_type_suffix); defaults generated from path."""
+                        fail_urls: set[str] | None = None,
+                        startup_topics: list[str] | None = None) -> httpx.MockTransport:
+    """pages: url -> (status, content_type_suffix); defaults generated from path.
+
+    startup_topics: when set (startup-mode offline runs), page bodies carry
+    deterministic startup-flavored sentences seeded by the topic keywords so
+    pain/pricing/signal extraction has real material. Claims still derive
+    from chunk text, preserving quote verification.
+    """
     fail_urls = fail_urls or set()
 
     def handler(request: httpx.Request) -> httpx.Response:
         url = str(request.url)
         if any(url.startswith(f) or f == url for f in fail_urls):
             return httpx.Response(500)
+        if startup_topics:
+            topic = " ".join(startup_topics)[:40] or "small business operations"
+            para = (
+                f"Owners complain that {topic} is manual and time-consuming. "
+                f"Staff copy data into spreadsheets every week as a workaround. "
+                f"Shops report paying 20000 rupees per month for consultants. "
+                f"Vendors price {topic} software at $20 per month per seat. "
+                f"One incumbent charges a $300 annual license per seat. "
+                "Users complain the tools lack integration and feel confusing. "
+                f"New regulation now mandates digital records for {topic}. "
+                f"A startup raised a $10M funding round to automate {topic}. "
+                f"Analysts size the global market at $10 billion in 2024. "
+                f"Other researchers estimate a $24 billion global market. "
+                "This article discusses grounded planning with quantitative results. "
+                f"Reference URL is {url}.")
+        else:
+            para = ("This article discusses retrieval augmented grounding for language model "
+                    "planning in robotics. It reviews methods and reports quantitative results. "
+                    f"Reference URL is {url}.")
         body = PAGE_TMPL.format(
             title=f"Document {url[-20:]}",
-            para=f"This article discusses retrieval augmented grounding for language model "
-                 f"planning in robotics. It reviews methods and reports quantitative results. "
-                 f"Reference URL is {url}.").encode()
+            para=para).encode()
         return httpx.Response(200, content=body, headers={"content-type": "text/html"})
 
     return httpx.MockTransport(handler)

@@ -35,6 +35,9 @@ class Opportunity(Entity):
     confidence: float = 0.0
     # transparent score breakdown (spec #39) - never an opaque number
     score_breakdown: dict = Field(default_factory=dict)
+    # extensible taxonomy classification (Phase 5 spec #33):
+    # workflow_automation | vertical_saas | marketplace | ... (see policies.opportunity_type)
+    opportunity_type: str = ""
 
     def ensure_id(self) -> None:
         super().ensure_id(self.PREFIX)

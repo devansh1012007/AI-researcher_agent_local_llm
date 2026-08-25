@@ -17,6 +17,23 @@ from pathlib import Path
 
 from research_engine.models.job import JobTask, ResearchJob, TaskStatus, Watcher
 
+
+class StaleTaskOwner(RuntimeError):
+    """Raised when a writer without current ownership attempts a fenced
+    mutation (INVARIANT-001/002). Carries expected vs received fence."""
+
+    def __init__(self, task_id: str, worker_id: str, expected_fence: int,
+                 received_fence: int | None, reason: str = ""):
+        self.task_id = task_id
+        self.worker_id = worker_id
+        self.expected_fence = expected_fence
+        self.received_fence = received_fence
+        self.reason = reason
+        super().__init__(
+            f"STALE_TASK_OWNER task={task_id} worker={worker_id} "
+            f"expected_fence={expected_fence} received_fence={received_fence} "
+            f"reason={reason}")
+
 _PLATFORM_SCHEMA = """
 CREATE TABLE IF NOT EXISTS jobs (
     id TEXT PRIMARY KEY,
@@ -198,7 +215,11 @@ class PlatformDB:
     def claim_next_task(self, worker_id: str, profiles: dict[str, int],
                         lease_seconds: float, now: datetime | None = None) -> JobTask | None:
         """Atomically claim the highest-priority runnable task under per-profile
-        concurrency caps. Expired leases are reclaimable by anyone (#120)."""
+        concurrency caps. Expired leases are reclaimable by anyone (#120).
+
+        FENCING: the claim bumps `attempts`, which IS the fencing token
+        (INVARIANT-001/002). All subsequent writes by this owner must carry
+        that token; the storage layer rejects mismatched ones."""
         now = now or datetime.now(timezone.utc)
         cutoff = (now - timedelta(seconds=lease_seconds)).isoformat()
         now_iso = now.isoformat()
@@ -227,7 +248,7 @@ class PlatformDB:
                     assert task is not None
                     task.status = TaskStatus.RUNNING
                     task.worker_id = worker_id
-                    task.attempts += 1
+                    task.attempts += 1          # fencing token (monotonic)
                     task.updated_at = now
                     task.lease_expires_at = now + timedelta(seconds=lease_seconds)
                     task.heartbeat_at = now
@@ -245,15 +266,22 @@ class PlatformDB:
         return None
 
     def heartbeat(self, task_id: str, worker_id: str,
-                  lease_seconds: float) -> bool:
+                  lease_seconds: float, fence: int | None = None) -> bool:
+        """Renew a live lease. With `fence` supplied (INVARIANT-002), a stale
+        owner's heartbeat is rejected exactly like its writes."""
         now = datetime.now(timezone.utc)
+        where = """WHERE id=? AND status IN ('CLAIMED','RUNNING')
+                     AND json_extract(data, '$.worker_id')=?"""
+        params: list = [task_id, worker_id]
+        if fence is not None:
+            where += " AND json_extract(data, '$.attempts')=?"
+            params.append(fence)
         with self._conn() as c:
             cur = c.execute(
-                """UPDATE tasks SET data=json_set(data, '$.heartbeat_at', ?),
-                       updated_at=?
-                   WHERE id=? AND status IN ('CLAIMED','RUNNING')
-                     AND json_extract(data, '$.worker_id')=?""",
-                (now.isoformat(), now.isoformat(), task_id, worker_id))
+                f"""UPDATE tasks SET data=json_set(data, '$.heartbeat_at', ?),
+                        updated_at=?
+                   {where}""",
+                [now.isoformat(), now.isoformat()] + params)
             renewed = cur.rowcount > 0
             if renewed:
                 task = self.get_task(task_id)
@@ -266,11 +294,28 @@ class PlatformDB:
 
     def finish_task(self, task_id: str, worker_id: str, ok: bool,
                     result: dict | None = None, error: str = "",
-                    error_category: str = "") -> JobTask | None:
-        task = self.get_task(task_id)
-        if task is None:
+                    error_category: str = "",
+                    fence: int | None = None) -> JobTask | None:
+        """Terminal write for a claimed task. Ownership-enforced: without a
+        matching (worker_id, fence) the write is REJECTED with StaleTaskOwner
+        (INVARIANT-001/002) — never silently ignored."""
+        current = self.get_task(task_id)
+        if current is None:
             return None
         now = datetime.now(timezone.utc)
+        if current.status not in (TaskStatus.CLAIMED, TaskStatus.RUNNING):
+            raise StaleTaskOwner(
+                task_id, worker_id, getattr(current, "attempts", 0),
+                fence, reason=f"task already terminal ({current.status})")
+        if current.worker_id != worker_id:
+            raise StaleTaskOwner(task_id, worker_id,
+                                 current.attempts, fence,
+                                 reason="task owned by another worker")
+        if fence is not None and current.attempts != fence:
+            raise StaleTaskOwner(task_id, worker_id,
+                                 current.attempts, fence,
+                                 reason="fencing token mismatch")
+        task = current
         task.updated_at = now
         task.result = result or {}
         task.error = error[:500]
@@ -284,14 +329,42 @@ class PlatformDB:
         else:
             task.status = TS.RETRYING
         with self._conn() as c:
-            c.execute(
-                "UPDATE tasks SET status=?, data=?, lease_expires_at=?, updated_at=? "
-                "WHERE id=?",
+            cur = c.execute(
+                """UPDATE tasks SET status=?, data=?, lease_expires_at=?, updated_at=?
+                   WHERE id=? AND status IN ('CLAIMED','RUNNING')
+                     AND json_extract(data,'$.worker_id')=?""",
                 (task.status,
                  json.dumps(json.loads(task.model_dump_json()), default=str),
                  task.lease_expires_at.isoformat() if task.lease_expires_at else None,
-                 now.isoformat(), task_id))
+                 now.isoformat(), task_id, worker_id))
+            if cur.rowcount == 0:
+                raise StaleTaskOwner(task_id, worker_id, current.attempts, fence,
+                                     reason="ownership lost between check and write")
         return task
+
+    def release_task(self, task_id: str, worker_id: str,
+                     fence: int | None = None) -> bool:
+        """Fenced, ownership-checked release back to QUEUED (pause path)."""
+        current = self.get_task(task_id)
+        if current is None:
+            return False
+        if current.worker_id != worker_id or \
+                (fence is not None and current.attempts != fence):
+            raise StaleTaskOwner(task_id, worker_id, current.attempts, fence,
+                                 reason="release by non-owner")
+        now = datetime.now(timezone.utc)
+        current.status = TaskStatus.QUEUED
+        current.lease_expires_at = None
+        current.updated_at = now
+        with self._conn() as c:
+            cur = c.execute(
+                """UPDATE tasks SET status=?, data=?, lease_expires_at=?, updated_at=?
+                   WHERE id=? AND status IN ('CLAIMED','RUNNING')
+                     AND json_extract(data,'$.worker_id')=?""",
+                (current.status,
+                 json.dumps(json.loads(current.model_dump_json()), default=str),
+                 None, now.isoformat(), task_id, worker_id))
+            return cur.rowcount > 0
 
     def requeue_task(self, task_id: str) -> JobTask | None:
         """Manual retry of a dead-lettered/failed task; keeps failure history."""

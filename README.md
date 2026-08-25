@@ -44,7 +44,7 @@ See [docs/architecture.md](docs/architecture.md) and the subsystem docs:
 [adaptive_research.md](docs/adaptive_research.md),
 [research_graph.md](docs/research_graph.md),
 [literature_intelligence.md](docs/literature_intelligence.md),
-[startup_intelligence.md](docs/startup_intelligence.md),
+[startup_specialist.md](docs/startup_specialist.md),
 [persistent_memory.md](docs/persistent_memory.md),
 [contradiction_engine.md](docs/contradiction_engine.md),
 [research_evaluation.md](docs/research_evaluation.md).
@@ -107,8 +107,31 @@ research pause/resume/report <id>
 
 Reports land in `research_data/<project_id>/reports/`. Academic projects additionally
 get `literature_map.md`, `methods_comparison.md`, `benchmark_analysis.md`; startup
-projects get `market_map.md`, `opportunity_map.md`, `validation_candidates.md`; all
-projects get `evidence_map.md`, `contradiction_report.md`, `research_timeline.md`.
+projects get `market_map.md`, `opportunity_map.md`, `validation_candidates.md`,
+`startup_research.md` (25 structured sections) and per-opportunity due-diligence
+reports; all projects get `evidence_map.md`, `contradiction_report.md`,
+`research_timeline.md`.
+
+## Startup researcher (Phase 5)
+
+```bash
+research startup discover  "<market question>"   # evidence-gated opportunities
+research startup research  "<market question>"   # full pipeline + reports
+research startup customer  [segment]             # segments/personas/pains/workflow
+research startup competitors                     # landscape, pricing, distribution
+research startup opportunity [opp_id]            # due diligence + recommendation
+research startup validate    [opp_id]            # assumptions -> ranked tests
+research startup compare                         # side-by-side matrix
+research startup assumptions                     # priority-ranked register
+research startup next                            # highest-leverage next action
+```
+
+Discipline baked in: opportunities emerge from evidence patterns only
+(SPECULATIVE otherwise), market-size conflicts stay visible (never averaged),
+behavioral evidence outranks stated intent, counterevidence is mandatory, and
+when the top uncertainty is customer behavior the engine tells you to stop
+searching and run the cheapest real-world test. See
+[docs/startup_specialist.md](docs/startup_specialist.md).
 
 ## Project structure
 

@@ -141,54 +141,88 @@ class IntelligenceReports:
         return self._write("market_map.md", "\n".join(lines))
 
     def write_opportunity_map(self, project_id: str) -> bool:
-        si = StartupIntelligence(self.repos, self.graph)
-        opps = si.discover_opportunities(project_id)
+        """READ-ONLY render of persisted opportunities (P0-10/P0-12).
+        Discovery/scoring belong to the specialist pipeline, never to report
+        generation; this writer renders whatever the canonical engine stored."""
+        opps = sorted(
+            self.repos.opportunities.all(project_id),
+            key=lambda o: -((o.score_breakdown or {}).get("total", 0)))
         lines = ["# Opportunity Map", "",
-                 "_Every opportunity emerges from clustered evidence with transparent scoring. "
-                 "'why_now' items require change-evidence; assumptions are unvalidated until "
+                 "_Rendered from the canonical opportunity store (read-only). "
+                 "Scores follow score_breakdown.schema_version; 'why_now' items "
+                 "require change-evidence; assumptions are unvalidated until "
                  "falsification tests pass._", ""]
-        scored = [(o, si.score_opportunity(project_id, o)) for o in opps]
-        scored.sort(key=lambda t: -t[1]["total"])
-        for o, br in scored:
-            lines.append(f"## {o.id} — score {br['total']:.2f} (confidence {o.confidence:.2f})")
+        for o in opps:
+            br = o.score_breakdown or {}
+            factors = br.get("factors") or {}
+            reasons = br.get("reasons") or {}
+            gate = br.get("gate") or {}
+            lines.append(f"## {o.id} — score {br.get('total', 0):.2f} "
+                         f"(priority {gate.get('priority', 'n/a')})")
             lines.append(f"- segment: {o.customer_segment}")
             lines.append(f"- problem: {o.problem[:200]}")
             lines.append(f"- current alternative: {o.current_alternative}")
-            lines.append(f"- factors:")
-            for k, v in br["factors"].items():
-                lines.append(f"    - {k}: {v:.2f} ({br['reasons'].get(k, '')})")
+            if factors:
+                lines.append("- factors:")
+                for k, v in factors.items():
+                    label = (br.get("labels") or {}).get(k, "")
+                    lines.append(f"    - {k}: {v:.2f} [{label}] ({reasons.get(k, '')})")
+                lines.append(f"- schema_version: {br.get('schema_version', 1)}")
+            else:
+                lines.append("- _legacy score format (schema_version 1) — rerun "
+                             "`startup discover` to re-score with canonical rubric_")
             lines.append(f"- why_now: {[w[:80] for w in o.why_now] or 'no change-evidence yet'}")
             lines.append(f"- risks: {o.risks}")
             lines.append(f"- evidence ids: {o.evidence_ids[:8]}")
             lines.append("")
-        if not scored:
-            lines.append("_No opportunities met the evidence threshold (needs >=2 distinct "
-                         "pain evidences or pain + corroborating signal)._")
+        if not opps:
+            lines.append("_No opportunities stored. Run `research startup discover`._")
         return self._write("opportunity_map.md", "\n".join(lines))
 
     def write_validation_candidates(self, project_id: str) -> bool:
-        from research_engine.intelligence.falsification import AssumptionEngine
-        si = StartupIntelligence(self.repos, self.graph)
-        eng = AssumptionEngine(self.repos, provider=None)  # deterministic template tests
-        opps = si.discover_opportunities(project_id)
-        lines = ["# Validation Candidates (assumptions + falsification tests)", ""]
-        for o in opps[:5]:
-            o.critical_assumptions = eng.critical_assumptions(o)
-            tests = eng.design_falsification_tests(project_id, o)
+        """READ-ONLY render of persisted assumptions + validation artifacts
+        (P0-10). Test DESIGN is a research action owned by the specialist
+        VALIDATION_PLANNING mode / human approval flow — reports never design."""
+        from research_engine.storage.reasoning_repos import ReasoningRepos
+        rr = ReasoningRepos(self.repos.db)
+        opps = sorted(self.repos.opportunities.all(project_id),
+                      key=lambda o: -((o.score_breakdown or {}).get("total", 0)))[:5]
+        asm_rows = rr.assumptions.all(project_id)
+        experiments = rr.experiments.all(project_id)
+        ftests = list(self.repos.db.execute(
+            "SELECT data FROM falsification_tests WHERE project_id=?",
+            (project_id,)))
+        lines = ["# Validation Candidates (persisted state, read-only)", ""]
+        for o in opps:
+            mine = [a for a in asm_rows
+                    if getattr(a, "opportunity_id", "") == o.id]
+            tests = [e for e in experiments
+                     if getattr(e, "hypothesis_id", "") and True][:6]
             lines.append(f"## {o.id}: {o.problem[:110]}")
-            lines.append("**Critical assumptions:**")
-            for a in o.critical_assumptions:
-                lines.append(f"- {a}")
-            lines.append("\n**Falsification tests:**")
-            for t in tests:
-                lines.append(f"- *{t.assumption[:90]}*")
-                lines.append(f"    - test: {t.cheapest_test}")
-                lines.append(f"    - pass: {t.success_condition}")
-                lines.append(f"    - fail: {t.failure_condition}")
-                lines.append(f"    - decision: {t.decision_rule}")
+            if mine:
+                ranked = sorted(mine, key=lambda a: -a.priority)
+                lines.append("**Critical assumptions:**")
+                for a in ranked[:5]:
+                    lines.append(f"- [{a.category}/{a.status}] {a.statement[:140]}")
+            else:
+                lines.append("_No assumption rows yet — run startup validate._")
             lines.append("")
-        if not opps:
-            lines.append("_No opportunities to validate yet._")
+        if experiments:
+            lines.append("## Designed validation tests")
+            from research_engine.reasoning.validation_designer import ValidationCritic
+            critic = ValidationCritic()
+            for e in experiments[:8]:
+                verdict = critic.inspect(e)["verdict"]
+                lines.append(f"- [{e.status}] {e.title[:100]} — critic: {verdict}")
+        elif ftests:
+            lines.append("## Legacy falsification templates on file")
+            import json as _json
+            for r in ftests[:8]:
+                d = _json.loads(r["data"])
+                lines.append(f"- *{(d.get('assumption') or '')[:90]}*")
+        else:
+            lines.append("_No validation tests designed yet — run `research "
+                         "startup validate`._")
         return self._write("validation_candidates.md", "\n".join(lines))
 
     # ------------------------------------------------------------------ general

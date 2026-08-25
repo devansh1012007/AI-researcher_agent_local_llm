@@ -69,18 +69,40 @@ class ProjectService:
         return out
 
     def list_projects(self) -> list[dict]:
+        """BUG-12 fix: a project.json ghost (no authoritative DB row) is
+        excluded, so list() and get() can never disagree about existence."""
         root = Path(self.ctx.data_dir)
         out = []
         for pj in sorted(root.glob("proj_*/project.json")):
             try:
                 data = json.loads(pj.read_text())
-                out.append({"id": data.get("id"), "question": data.get("question_raw"),
+                pid = data.get("id")
+                if not pid or not self._has_db_row(pid):
+                    continue   # orphaned workspace: not a real project
+                out.append({"id": pid, "question": data.get("question_raw"),
                             "state": data.get("state"),
                             "mode": data.get("mode"),
                             "updated_at": data.get("updated_at")})
             except (OSError, ValueError, KeyError):
                 continue
         return out
+
+    def _has_db_row(self, project_id: str) -> bool:
+        db_path = Path(self.ctx.data_dir) / project_id / "db.sqlite"
+        if not db_path.exists():
+            return False
+        try:
+            import sqlite3
+            conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+            try:
+                row = conn.execute(
+                    "SELECT 1 FROM projects WHERE id=? LIMIT 1",
+                    (project_id,)).fetchone()
+                return row is not None
+            finally:
+                conn.close()
+        except sqlite3.Error:
+            return False
 
     def status(self, project_id: str) -> dict:
         from research_engine.core.orchestrator import Orchestrator
@@ -200,8 +222,12 @@ class ResearchService:
         """Grounded Q&A over the project's evidence memory (inline, fast)."""
         from research_engine.core.orchestrator import Orchestrator
         from research_engine.memory.qa import GroundedQA
+        from research_engine.memory.retrieval import build_retriever
         orch = Orchestrator.load(self.ctx.cfg, project_id)
-        qa = GroundedQA(orch.router.reasoning, orch.repos)
+        # P0-05 fix: GroundedQA(repos, retriever, provider) — the previous
+        # call site passed (provider, repos) and crashed 100% of the time.
+        qa = GroundedQA(orch.repos, build_retriever(self.ctx.cfg, orch.repos),
+                        orch.router.reasoning)
         resp = qa.ask(project_id, req.query, top_k=req.top_k)
         return {"question": resp.question, "answer": resp.answer,
                 "confidence": resp.confidence, "insufficient": resp.insufficient,

@@ -49,12 +49,32 @@ class ConvergenceAnalyzer:
         new_ev = stats.get("new_evidence", 0)
         high_gaps = stats.get("high_importance_gaps", 0)
         dup_rate = stats.get("duplicate_rate", 0.0)
+        rej_rate = stats.get("rejection_rate", 0.0)
+        fetch_successes = stats.get("fetch_successes")
+        fetch_failures = stats.get("fetch_failures", 0)
+        queries_executed = stats.get("queries_executed", 0)
+
+        # P0-04 INVARIANT-006: failure is not saturation. Degradation means
+        # retrieval ATTEMPTED and FAILED (network/provider), not merely
+        # "nothing new" (which cached-duplicate silence also produces).
+        if (new_ev == 0 and fetch_failures > 0 and queries_executed > 0):
+            return ConvergenceDecision(
+                True, StopReason.PROVIDER_DEGRADED,
+                f"{queries_executed} queries ran; {fetch_failures} fetch "
+                "failures and 0 new evidence this iteration")
+        if total_ev > 0 and rej_rate > r.duplicate_rate_converged:
+            # hallucinated-extraction pathology: stop as DEGRADED for diagnosis,
+            # never report as converged research
+            return ConvergenceDecision(
+                True, StopReason.PROVIDER_DEGRADED,
+                f"verification rejection rate {rej_rate:.2f} exceeds threshold — "
+                "extraction quality degraded")
         if total_ev >= 10 and new_ev / max(1, total_ev) < r.new_evidence_threshold:
             return ConvergenceDecision(True, StopReason.CONVERGED,
                                        f"new evidence rate {new_ev}/{total_ev} below threshold")
         if total_ev > 0 and dup_rate > r.duplicate_rate_converged:
             return ConvergenceDecision(True, StopReason.CONVERGED,
-                                       f"duplicate rate {dup_rate:.2f} too high")
+                                       f"true duplicate rate {dup_rate:.2f} too high")
         if total_ev >= 10 and high_gaps == 0 and stats.get("new_claims", 0) == 0:
             return ConvergenceDecision(True, StopReason.NO_HIGH_VALUE_GAPS,
                                        "no high-importance gaps and no new claims")

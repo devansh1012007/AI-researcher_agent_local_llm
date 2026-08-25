@@ -24,6 +24,7 @@ class ReportGenerator:
         self.cfg = cfg
         self.repos = repos
         self.ws = ws
+        self.provider = provider
         self.synth = Synthesizer(provider)
 
     def generate_all(self, project) -> list[str]:
@@ -349,7 +350,63 @@ class ReportGenerator:
         self._write("literature_review.md", body)
         return True
 
+    def _write_opportunity_reports(self, svc, ctx, project_id: str) -> int:
+        """Write one due-diligence report per scored opportunity (spec #74)."""
+        from research_engine.specialists.startup.reports import StartupReportWriter
+        repos = ctx["_repos"][0]
+        rrepos = ctx["_repos"][2]
+        engine = ctx["_analyzer_handles"]["opportunities"]
+        decisions = ctx["_analyzer_handles"]["decisions"]
+        writer = StartupReportWriter(self.ws.reports, self.provider)
+        n = 0
+        all_asm = rrepos.assumptions.all(project_id)
+        for opp in sorted(repos.opportunities.all(project_id),
+                          key=lambda o: -(o.score_breakdown or {}).get("total", 0))[:5]:
+            try:
+                sb = opp.score_breakdown or {}
+                gate = sb.get("gate", {})
+                pair = engine.counter_evidence_pair(project_id, opp)
+                readiness = decisions.readiness(project_id, opp.id, gate)
+                opp_asm = [a for a in all_asm if a.opportunity_id == opp.id]
+                rec = decisions.recommend(project_id, opp, gate, readiness,
+                                          opp_asm, counter_pair=pair)
+                writer.write_opportunity_report(
+                    opp, sb, pair,
+                    engine.why_not_built(project_id, opp, ctx),
+                    engine.moat_analysis(project_id, opp), readiness, rec)
+                n += 1
+            except Exception as exc:
+                log.warning("opportunity report failed for %s: %s", opp.id, exc)
+        return n
+
     def write_startup_research(self, project) -> str:
+        """READ-ONLY (INVARIANT-004): renders the specialist's 25-section
+        report from state computed by the ORCHESTRATOR (pre-computed result)
+        or from persisted stores. Report generation NEVER runs research
+        pipelines nor mutates primary state (audit P0-10)."""
+        try:
+            from research_engine.specialists.startup.service import StartupResearchService
+            from research_engine.specialists.startup.reports import StartupReportWriter
+            svc = StartupResearchService(cfg=self.cfg, data_dir=self.cfg.storage.data_dir)
+            ctx = svc.build_market_context(project.id, persist=False)
+            pre = getattr(self, "_startup_pipeline_result", None)
+            if pre is not None:
+                pipe_result = pre
+                diligence = pre.get("diligence", {})
+            else:
+                # regenerate-after-the-fact: rebuild views from PERSISTED state
+                pipe_result = self._startup_view_from_store(project.id)
+                diligence = pipe_result.get("diligence", {})
+            writer = StartupReportWriter(self.ws.reports, self.provider)
+            path = writer.write_startup_research(
+                ctx, pipe_result.get("discovery", {}),
+                pipe_result.get("validation", {}), diligence)
+            if path:
+                # per-opportunity due-diligence reports (#74) — read-only too
+                self._write_opportunity_reports(svc, ctx, project.id)
+                return True
+        except Exception as exc:
+            log.warning("specialist startup report failed; legacy fallback: %s", exc)
         claims = self.repos.claims.all(project.id)
         evidence = {e.id: e for e in self.repos.evidence.all(project.id)}
         ctx = _base_ctx(self.repos, project)
@@ -363,6 +420,28 @@ class ReportGenerator:
             md = deterministic_findings(claims, evidence)
         self._write("startup_research.md", "# Startup Research\n\n" + md + "\n")
         return True
+
+    def _startup_view_from_store(self, project_id: str) -> dict:
+        """Read-only reconstruction of discovery/validation views for
+        report regeneration without executing any pipeline."""
+        from research_engine.specialists.startup.service import StartupResearchService
+        svc = StartupResearchService(cfg=self.cfg,
+                                     data_dir=self.cfg.storage.data_dir)
+        repos = svc._repos_for(svc._orch(project_id))[0]
+        opps = sorted(repos.opportunities.all(project_id),
+                      key=lambda o: -((o.score_breakdown or {}).get("total", 0)))
+        discovery = {"count": len(opps), "patterns_seen": [],
+                     "opportunities": [
+                         {"opportunity_id": o.id, "problem": o.problem[:160],
+                          "total_score": (o.score_breakdown or {}).get("total", 0),
+                          "priority": (o.score_breakdown or {}).get(
+                              "gate", {}).get("priority", ""),
+                          "portfolio_slot": "stored candidate"}
+                         for o in opps[:5]]}
+        validation = {"business_hypotheses_created": 0, "plans": []}
+        diligence = {}
+        return {"discovery": discovery, "validation": validation,
+                "diligence": diligence}
 
 
 # ---------------------------------------------------------------------------

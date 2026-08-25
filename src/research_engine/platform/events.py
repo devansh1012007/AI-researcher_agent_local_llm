@@ -9,6 +9,7 @@ Domain events carry: event_id, type, project_id, job_id, ts, payload.
 """
 from __future__ import annotations
 
+import logging
 import queue
 import threading
 import time
@@ -67,6 +68,8 @@ class EventBus:
         self._lock = threading.Lock()
         self._queue_size = queue_size
         self._counter = 0
+        self.dropped_events = 0      # BUG-11: drops are counted, never silent
+        self._drop_log = logging.getLogger("gar.events.dropped")
 
     def subscribe(self, types: list[str] | None = None) -> tuple[str, "queue.Queue"]:
         """Returns (sub_id, queue). types=None means all events."""
@@ -94,11 +97,17 @@ class EventBus:
             try:
                 q.put_nowait(event)
             except queue.Full:
+                with self._lock:
+                    self.dropped_events += 1
+                self._drop_log.warning(
+                    "EVENT_DROPPED type=%s project=%s total_dropped=%s",
+                    event.type, event.project_id, self.dropped_events)
                 try:
                     q.get_nowait()   # drop oldest
                     q.put_nowait(event)
                 except (queue.Empty, queue.Full):
-                    pass
+                    with self._lock:
+                        self.dropped_events += 1
         return event
 
 

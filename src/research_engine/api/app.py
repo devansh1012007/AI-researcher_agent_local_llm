@@ -43,6 +43,18 @@ class ApiInfo(BaseModel):
     environment: str = "HYBRID"
 
 
+class StartupDiscoverReq(BaseModel):
+    question: str = Field(min_length=8, max_length=2000)
+    create: bool = True
+    project_id: str = ""   # reuse an existing startup project instead of creating
+
+
+class StartupModeReq(BaseModel):
+    project_id: str = ""
+    opportunity_id: str = ""
+    segment: str = ""
+
+
 # ---------------------------------------------------------------- app factory
 def create_app(ctx: ServiceContext | None = None) -> FastAPI:
     ctx = ctx  # resolved lazily so tests can inject isolated contexts
@@ -289,6 +301,78 @@ def create_app(ctx: ServiceContext | None = None) -> FastAPI:
         return _guard(lambda: ExperimentService(get_ctx()).add_result(
             project_id, exp_id, observations=body.get("observations"),
             metrics=body.get("metrics"), raw_notes=body.get("raw_notes", "")))
+
+    # ------------------------------------------------ startup specialist (#77)
+    def _svc():
+        # BUG-08 fix: resolve through get_ctx() so default create_app(None)
+        # works; previously this closure captured the raw None argument.
+        resolved = get_ctx()
+        cfg = resolved.cfg.model_copy(deep=True)
+        cfg.storage.data_dir = resolved.data_dir
+        from research_engine.specialists.startup.service import StartupResearchService
+        return StartupResearchService(cfg=cfg, data_dir=resolved.data_dir)
+
+    def _latest_startup_pid() -> str:
+        projects = ProjectService(get_ctx()).list_projects()
+        startup = [p for p in projects if p.get("mode") == "startup"]
+        if not startup:
+            raise NotFoundError("startup project", "any")
+        return sorted(startup, key=lambda p: p.get("created_at", ""),
+                      reverse=True)[0]["id"]
+
+    @app.post("/startup/discover", status_code=200)
+    def startup_discover(body: StartupDiscoverReq, _: str = Depends(auth)) -> dict:
+        pid = body.project_id
+        if not pid:
+            if not body.create:
+                pid = _latest_startup_pid()
+            else:
+                created = ProjectService(get_ctx()).create(
+                    ProjectCreate(question=body.question, mode="startup"))
+                pid = created["id"]
+        return _guard(lambda: _svc().run_mode(pid, "OPPORTUNITY_DISCOVERY"))
+
+    @app.post("/startup/research")
+    def startup_research(body: StartupDiscoverReq, _: str = Depends(auth)) -> dict:
+        pid = body.project_id
+        if not pid:
+            created = ProjectService(get_ctx()).create(
+                ProjectCreate(question=body.question, mode="startup"))
+            pid = created["id"]
+        return _guard(lambda: _svc().run_full_pipeline(pid))
+
+    @app.get("/startup/opportunities/{opportunity_id}")
+    def startup_opportunity(opportunity_id: str,
+                            project_id: str = "", _: str = Depends(auth)) -> dict:
+        pid = project_id or _latest_startup_pid()
+        return _guard(lambda: _svc().run_mode(
+            pid, "OPPORTUNITY_DUE_DILIGENCE", opportunity_id=opportunity_id))
+
+    @app.post("/startup/validate")
+    def startup_validate(body: StartupModeReq, _: str = Depends(auth)) -> dict:
+        pid = body.project_id or _latest_startup_pid()
+        return _guard(lambda: _svc().run_mode(
+            pid, "VALIDATION_PLANNING", opportunity_id=body.opportunity_id))
+
+    @app.post("/startup/compare")
+    def startup_compare(body: StartupModeReq, _: str = Depends(auth)) -> dict:
+        pid = body.project_id or _latest_startup_pid()
+        return _guard(lambda: _svc().run_mode(pid, "STARTUP_COMPARISON"))
+
+    @app.get("/startup/competitors")
+    def startup_competitors(project_id: str = "", _: str = Depends(auth)) -> dict:
+        pid = project_id or _latest_startup_pid()
+        return _guard(lambda: _svc().run_mode(pid, "COMPETITOR_RESEARCH"))
+
+    @app.get("/startup/segments")
+    def startup_segments(project_id: str = "", _: str = Depends(auth)) -> dict:
+        pid = project_id or _latest_startup_pid()
+        return _guard(lambda: _svc().run_mode(pid, "CUSTOMER_RESEARCH"))
+
+    @app.get("/startup/market-map")
+    def startup_market_map(project_id: str = "", _: str = Depends(auth)) -> dict:
+        pid = project_id or _latest_startup_pid()
+        return _guard(lambda: _svc().run_mode(pid, "MARKET_DISCOVERY"))
 
     # -------------------------------------------------------------- errors
     @app.exception_handler(NotFoundError)

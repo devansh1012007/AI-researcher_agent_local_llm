@@ -78,7 +78,9 @@ class ResearchMetrics(Entity):
     gaps_resolved: int = 0
     new_evidence_this_iter: int = 0
     new_claims_this_iter: int = 0
-    duplicate_rate: float = 0.0
+    duplicate_rate: float = 0.0        # TRUE duplicates among accepted evidence
+    rejection_rate: float = 0.0        # failed quote/support verification ratio
+    queries_this_iter: int = 0         # queries executed in this iteration
     new_evidence_rate: float = 0.0
     gap_resolution_rate: float = 0.0
     source_diversity_domains: int = 0

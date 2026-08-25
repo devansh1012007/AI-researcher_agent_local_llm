@@ -29,11 +29,10 @@ _PAIN_RE = re.compile(
     r"\b(complain\w*|frustrat\w*|pain(?:ful|point)?|struggl\w*|hassle|tedious|"
     r"manual\w*|time[- ]consuming|expensive|overwhelm\w*|hard to|difficult to|"
     r"can'?t afford|too slow|workaround)\b", re.I)
-_PRICE_RE = re.compile(
-    r"(?P<currency>[$₹€£])\s?(?P<amount>\d[\d,.]*)"
-    r"(?!\s?[mb]\b)"   # exclude funding magnitudes like $5M / $1.2B
-    r"\s*(?P<per>/?\s?(?:mo\b|month|yr\b|year|user|seat))?",
-    re.I)
+# P0-06: the legacy ad-hoc price regex (which backtracked "$10M" -> "$1")
+# is RETIRED. Price extraction delegates to the canonical magnitude-aware
+# parser so there is exactly one money-parsing implementation (INVARIANT).
+_PRICE_RE = None
 _SIGNAL_KINDS = [
     ("funding", re.compile(r"\b(rais\w+\s+\$?\d|funding round|series [abc]|seed round|"
                            "vc investment|venture round)", re.I)),
@@ -109,17 +108,26 @@ class StartupIntelligence:
         return competitors
 
     def _extract_prices(self, project_id: str) -> list[PriceObservation]:
+        """Canonical price extraction (P0-06): delegates to the single
+        magnitude-aware parser; funding/market-size magnitudes can never
+        become seat prices."""
+        from research_engine.specialists.startup.competitors import (
+            _AMOUNT_RE, _billing_period, _is_magnitude_price)
         prices: list[PriceObservation] = []
         for ev in self.accepted_evidence(project_id):
-            m = _PRICE_RE.search(ev.quote or "") or _PRICE_RE.search(ev.claim_text or "")
-            if not m:
+            quote = (ev.quote or "") + " " + (ev.claim_text or "")
+            m = _AMOUNT_RE.search(quote)
+            if not m or _is_magnitude_price(quote, m):
                 continue
-            per = (m.group("per") or "").lower()
-            period = ("monthly" if "mo" in per or "month" in per else
-                      "annual" if "year" in per or "yr" in per else "")
-            currency = {"$": "USD", "₹": "INR", "€": "EUR", "£": "GBP"}.get(m.group("currency"), "")
-            p = PriceObservation(project_id=project_id, amount_raw=m.group("amount"),
-                                 currency=currency, billing_period=period,
+            per = _billing_period(quote)
+            period = per if per in ("monthly", "annual", "one_time",
+                                    "seat_based", "usage_based") else ""
+            currency = {"$": "USD", "₹": "INR", "€": "EUR", "£": "GBP"}.get(
+                m.group("cur"), "")
+            p = PriceObservation(project_id=project_id,
+                                 amount_raw=m.group(0),
+                                 currency=currency,
+                                 billing_period=period,
                                  observed_date=str(ev.published_date or ""),
                                  source_id=ev.source_id, evidence_id=ev.id,
                                  included_limits=ev.location[:100])

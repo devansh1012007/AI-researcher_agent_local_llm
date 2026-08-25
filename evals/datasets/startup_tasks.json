@@ -1,0 +1,109 @@
+{
+  "tasks": [
+    {
+      "id": "p5_startup_discovery_india_smb",
+      "mode": "startup",
+      "question": "Find promising startup opportunities around AI bookkeeping software for small businesses in India.",
+      "expected_subquestions": [
+        "what bookkeeping pains do indian smb retailers express",
+        "which software products compete in this space and how are they priced",
+        "what regulation or technology shifts affect the market",
+        "which customer segments are underserved"
+      ],
+      "expected_source_categories": ["forum", "company", "government", "news"],
+      "expect_opportunity_pipeline": true,
+      "expect_business_hypotheses": true,
+      "expect_startup_report_sections": 25,
+      "quality_expectations": {
+        "min_citation_coverage": 0.9,
+        "min_quote_correctness": 0.95
+      }
+    },
+    {
+      "id": "p5_startup_customer_research_clinics",
+      "mode": "startup",
+      "question": "Understand the workflows, jobs and pain points of independent dental clinics managing patient billing.",
+      "expected_subquestions": [
+        "how do clinics currently handle billing step by step",
+        "what do clinic managers complain about most",
+        "what do they currently pay for alternatives",
+        "who decides on purchases at a clinic"
+      ],
+      "expected_source_categories": ["forum", "news", "review_site"],
+      "expect_opportunity_pipeline": true,
+      "expect_business_hypotheses": true,
+      "expect_startup_report_sections": 25,
+      "quality_expectations": {
+        "min_quote_correctness": 0.95
+      }
+    },
+    {
+      "id": "p5_startup_validation_planning",
+      "mode": "startup",
+      "question": "Evaluate the opportunity for vertical SaaS serving fleet operators in last-mile logistics.",
+      "expected_subquestions": [
+        "what pain exists in fleet operations workflows",
+        "which competitors serve fleet operators today",
+        "what assumptions would the opportunity depend on",
+        "what is the cheapest decisive validation test"
+      ],
+      "expected_source_categories": ["industry_report", "company", "forum"],
+      "expect_opportunity_pipeline": true,
+      "expect_business_hypotheses": true,
+      "expect_validation_tests_designed": true,
+      "expect_behavioral_uncertainty_named": true,
+      "quality_expectations": {
+        "min_citation_coverage": 0.85,
+        "min_quote_correctness": 0.95
+      }
+    },
+    {
+      "id": "p5_failure_market_size_conflict",
+      "mode": "startup",
+      "question": "How big is the global AI customer support market and what opportunities exist?",
+      "expected_subquestions": [
+        "how do market size definitions differ across reports",
+        "which figures are comparable by geography and year",
+        "what opportunities exist despite sizing uncertainty"
+      ],
+      "expect_market_size_conflict_visible": true,
+      "expect_opportunity_pipeline": true,
+      "failure_scenario": "market data conflicts across sources; system must keep MARKET_SIZE_CONFLICT visible instead of averaging",
+      "quality_expectations": {
+        "min_quote_correctness": 0.95
+      }
+    },
+    {
+      "id": "p5_failure_no_competitors_warning",
+      "mode": "startup",
+      "question": "Find startup opportunities in offline village-level crop insurance claims processing.",
+      "expected_subquestions": [
+        "do farmers file claims manually today",
+        "are any competitors visible in this niche",
+        "why might this niche have no visible competitors"
+      ],
+      "expect_opportunity_pipeline": true,
+      "expect_why_not_built_analysis": true,
+      "failure_scenario": "no visible competitors; system must treat absence as warning not validation",
+      "quality_expectations": {
+        "min_quote_correctness": 0.95
+      }
+    },
+    {
+      "id": "p5_failure_overhyped_weak_demand",
+      "mode": "startup",
+      "question": "Find opportunities in consumer quantum computing education apps.",
+      "expected_subquestions": [
+        "does real customer pain exist beyond hype",
+        "is there spending evidence from consumers",
+        "what counterevidence argues against demand"
+      ],
+      "expect_counterevidence_pair": true,
+      "expect_speculative_labeling": true,
+      "failure_scenario": "funding/attention high but customer demand weak; system must stay skeptical",
+      "quality_expectations": {
+        "min_quote_correctness": 0.95
+      }
+    }
+  ]
+}

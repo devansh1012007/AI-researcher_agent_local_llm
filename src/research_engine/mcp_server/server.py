@@ -155,6 +155,61 @@ def build_tools() -> list[dict[str, Any]]:
                           "metrics": {"type": "object"},
                           "raw_notes": {"type": "string"}},
            "required": ["project_id", "experiment_id"]}),
+        # --- startup specialist tools (spec #78) ---
+        t("startup_research",
+          "Full startup pipeline: discovery -> hypotheses -> validation -> decision",
+          Permission.RESEARCH,
+          {"type": "object",
+           "properties": {"question": {"type": "string"},
+                          "project_id": {"type": "string"}},
+           "required": ["question"]}),
+        t("startup_discover_opportunities",
+          "Evidence-pattern opportunity discovery for a market project",
+          Permission.RESEARCH,
+          {"type": "object",
+           "properties": {"question": {"type": "string"},
+                          "project_id": {"type": "string"}},
+           "required": ["question"]}),
+        t("startup_get_market_map",
+          "Market map: definition, gaps, segments, competitors, trends",
+          Permission.READ,
+          {"type": "object", "properties": {"project_id": {"type": "string"}}}),
+        t("startup_get_customer_segments",
+          "Customer research: segments, personas, pains, alternatives, workflow",
+          Permission.READ,
+          {"type": "object",
+           "properties": {"project_id": {"type": "string"},
+                          "segment": {"type": "string"}}}),
+        t("startup_get_competitors",
+          "Competitor profiles, pricing plans, distribution, gaps",
+          Permission.READ,
+          {"type": "object", "properties": {"project_id": {"type": "string"}}}),
+        t("startup_get_opportunities",
+          "Scored, gated opportunity portfolio",
+          Permission.READ,
+          {"type": "object", "properties": {"project_id": {"type": "string"}}}),
+        t("startup_analyze_opportunity",
+          "Due diligence on one opportunity: rubric, readiness, recommendation",
+          Permission.READ,
+          {"type": "object",
+           "properties": {"opportunity_id": {"type": "string"},
+                          "project_id": {"type": "string"}},
+           "required": ["opportunity_id"]}),
+        t("startup_get_assumptions",
+          "Ranked assumption register (priority = importance x uncertainty x impact x testability)",
+          Permission.READ,
+          {"type": "object", "properties": {"project_id": {"type": "string"}}}),
+        t("startup_design_validation",
+          "Design ranked validation tests + staged sequence for an opportunity",
+          Permission.RESEARCH,
+          {"type": "object",
+           "properties": {"project_id": {"type": "string"},
+                          "opportunity_id": {"type": "string"}},
+           "required": ["project_id"]}),
+        t("startup_compare_opportunities",
+          "Side-by-side comparison matrix + tradeoffs",
+          Permission.READ,
+          {"type": "object", "properties": {"project_id": {"type": "string"}}}),
     ]
 
 
@@ -194,6 +249,23 @@ class McpServer:
         return ProjectService(self._ctx())
 
     @property
+    def startup(self):
+        """Startup specialist service wired to this server's context."""
+        from research_engine.specialists.startup.service import StartupResearchService
+        ctx = self._ctx()
+        cfg = ctx.cfg.model_copy(deep=True)
+        cfg.storage.data_dir = ctx.data_dir
+        return StartupResearchService(cfg=cfg, data_dir=ctx.data_dir)
+
+    def _latest_startup_pid(self) -> str:
+        projects = self.projects.list_projects()
+        startup = [p for p in projects if p.get("mode") == "startup"]
+        if not startup:
+            raise NotFoundError("startup project", "latest")
+        return sorted(startup, key=lambda p: p.get("created_at", ""),
+                      reverse=True)[0]["id"]
+
+    @property
     def research(self):
         from research_engine.services.research_service import ResearchService
         return ResearchService(self._ctx())
@@ -217,6 +289,11 @@ class McpServer:
     def experiments(self):
         from research_engine.services.knowledge_service import ExperimentService
         return ExperimentService(self._ctx())
+
+    @property
+    def knowledge(self):
+        from research_engine.services.knowledge_service import KnowledgeService
+        return KnowledgeService(self._ctx())
 
     # ------------------------------------------------------------- protocol
     def handle(self, msg: dict) -> dict | None:
@@ -371,19 +448,13 @@ class McpServer:
                         for r in summary.get("ranked", [])[:5]]}
 
     def _tool_design_methodology(self, a: dict) -> dict:
-        orch = _load_orch(self._ctx(), a["project_id"])
-        rr = _rrepos_of(orch)
-        from research_engine.reasoning.methodology_designer import MethodologyDesigner
-        h = rr.hypotheses.get(a["hypothesis_id"])
-        if h is None:
-            raise NotFoundError("hypothesis", a["hypothesis_id"])
-        designs = MethodologyDesigner(orch.router.reasoning, orch.repos).design(h)
-        out = []
-        for d in designs:
-            m = rr.methodologies.save(d)
-            out.append({"methodology_id": d.id, "tier": d.tier,
-                        "success_criteria": d.success_criteria})
-        return {"methodologies": out}
+        # P0-05/BUG-06 fix: canonical path via the knowledge service
+        out = self.knowledge.design_methodology(a["project_id"],
+                                                a["hypothesis_id"])
+        return {"methodologies": [
+            {"methodology_id": m["id"], "tier": m["tier"],
+             "success_criteria": m.get("success_criteria", "")}
+            for m in out]}
 
     def _tool_add_experiment_result(self, a: dict) -> dict:
         outcome = self.experiments.add_result(
@@ -391,6 +462,65 @@ class McpServer:
             observations=a.get("observations"),
             metrics=a.get("metrics"), raw_notes=a.get("raw_notes", ""))
         return outcome
+
+    # ------------------------------------------------ startup tools (spec #78)
+    def _tool_startup_research(self, a: dict) -> dict:
+        pid = a.get("project_id")
+        if not pid:
+            p = self.projects.create(ProjectCreate(question=a["question"],
+                                                   mode="startup"))
+            pid = p["id"]
+        return self.startup.run_full_pipeline(pid)
+
+    def _tool_startup_discover_opportunities(self, a: dict) -> dict:
+        pid = a.get("project_id")
+        if not pid:
+            existing = [p for p in self.projects.list_projects()
+                        if p.get("question", "").strip().lower() ==
+                        a["question"].strip().lower() and p.get("mode") == "startup"]
+            if existing:
+                pid = sorted(existing, key=lambda x: x["created_at"],
+                             reverse=True)[0]["id"]
+            else:
+                p = self.projects.create(ProjectCreate(question=a["question"],
+                                                       mode="startup"))
+                pid = p["id"]
+        return self.startup.run_mode(pid, "OPPORTUNITY_DISCOVERY")
+
+    def _tool_startup_get_market_map(self, a: dict) -> dict:
+        return self.startup.run_mode(a.get("project_id") or self._latest_startup_pid(),
+                                     "MARKET_DISCOVERY")
+
+    def _tool_startup_get_customer_segments(self, a: dict) -> dict:
+        return self.startup.run_mode(a.get("project_id") or self._latest_startup_pid(),
+                                     "CUSTOMER_RESEARCH", segment=a.get("segment", ""))
+
+    def _tool_startup_get_competitors(self, a: dict) -> dict:
+        return self.startup.run_mode(a.get("project_id") or self._latest_startup_pid(),
+                                     "COMPETITOR_RESEARCH")
+
+    def _tool_startup_get_opportunities(self, a: dict) -> dict:
+        return self.startup.run_mode(a.get("project_id") or self._latest_startup_pid(),
+                                     "OPPORTUNITY_DISCOVERY")
+
+    def _tool_startup_analyze_opportunity(self, a: dict) -> dict:
+        return self.startup.run_mode(a.get("project_id") or self._latest_startup_pid(),
+                                     "OPPORTUNITY_DUE_DILIGENCE",
+                                     opportunity_id=a.get("opportunity_id", ""))
+
+    def _tool_startup_get_assumptions(self, a: dict) -> dict:
+        # P0-11: canonical service path (was raw Orchestrator+ReasoningRepos)
+        pid = a.get("project_id") or self._latest_startup_pid()
+        return self.startup.assumption_register(pid)
+
+    def _tool_startup_design_validation(self, a: dict) -> dict:
+        return self.startup.run_mode(a.get("project_id") or self._latest_startup_pid(),
+                                     "VALIDATION_PLANNING",
+                                     opportunity_id=a.get("opportunity_id", ""))
+
+    def _tool_startup_compare_opportunities(self, a: dict) -> dict:
+        return self.startup.run_mode(a.get("project_id") or self._latest_startup_pid(),
+                                     "STARTUP_COMPARISON")
 
     # ----------------------------------------------------------- resources
     def _list_resources(self) -> list[dict]:
@@ -455,8 +585,3 @@ def _load_orch(ctx, project_id):
         raise NotFoundError("project", project_id) from exc
 
 
-def _rrepos_of(orch):
-    from research_engine.storage.reasoning_repos import ReasoningRepos
-    if not hasattr(orch, "_rrepos"):
-        orch._rrepos = ReasoningRepos(orch.db)
-    return orch._rrepos

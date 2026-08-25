@@ -52,6 +52,76 @@ class _GenericRepo:
     def count(self, project_id: str, where: str = "", params: tuple = ()) -> int:
         return self.db.count(self.table, project_id, where, params)
 
+    def _physical_cols(self) -> set[str]:
+        cached = getattr(self, "_phys_cols", None)
+        if cached is None:
+            rows = self.db.execute(
+                f"PRAGMA table_info({self.table})")
+            cached = {r["name"] for r in rows}
+            self._phys_cols = cached
+        return cached
+
+    def find_by_natural_key(self, project_id: str, key_cols: dict) -> object | None:
+        """Resolve an entity by its natural-key columns (must be indexed).
+        Text keys compare case-insensitively (identity is not casing).
+        Physical columns are queried directly; other keys resolve through
+        the JSON document."""
+        if not key_cols:
+            return None
+        phys = self._physical_cols()
+        conds = []
+        params: list = []
+        for col, val in key_cols.items():
+            if col in phys:
+                conds.append(f"{col} LIKE ? COLLATE NOCASE")
+                params.append(val)
+            else:
+                conds.append(f"json_extract(data,'$.{col}') LIKE ? COLLATE NOCASE")
+                params.append(val)
+        rows = self.db.list(self.table, project_id,
+                            " AND ".join(conds), tuple(params))
+        return self.model.model_validate(rows[0]) if rows else None
+
+    def save_natural(self, entity, merge: bool = True):
+        """INVARIANT-003: idempotent persist by natural key.
+
+        Resolves an existing row via `natural_key(entity)`; merges the
+        incoming snapshot into it (list provenance unions) and keeps the
+        ORIGINAL identity. Only genuinely new entities mint ids.
+        """
+        key = self.natural_key(entity) if hasattr(self, "natural_key") else {}
+        if not key:
+            self.save(entity)
+            return entity
+        existing = self.find_by_natural_key(entity.project_id, key)
+        if existing is not None:
+            if merge:
+                from research_engine.specialists.startup.identity import merge_entities
+                merged = merge_entities(existing, entity)
+                merged.updated_at = entity.updated_at
+                self.save(merged)
+                return merged
+            entity.id = existing.id
+            self.save(entity)
+            return entity
+        entity.ensure_id()
+        try:
+            self.save(entity)
+            return entity
+        except Exception:
+            # lost a race against a unique index: re-resolve and merge
+            existing = self.find_by_natural_key(entity.project_id, key)
+            if existing is None:
+                raise
+            if merge:
+                from research_engine.specialists.startup.identity import merge_entities
+                merged = merge_entities(existing, entity)
+                self.save(merged)
+                return merged
+            entity.id = existing.id
+            self.save(entity)
+            return entity
+
 
 class HypothesisRepo(_GenericRepo):
     table = "hypotheses"

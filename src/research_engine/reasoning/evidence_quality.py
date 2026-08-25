@@ -73,19 +73,37 @@ class AggregateStrength:
 
 
 def aggregate_claim_strength(claim: Claim, evidence_items: list[Evidence]) -> AggregateStrength:
-    """Transparent aggregation; documented formula."""
+    """Transparent aggregation; documented formula.
+
+    INVARIANT-005/007: tier weights are multiplied by the evidence's
+    claim-support factor (pipeline/claim_support), so a swarm of weak or
+    partially-supporting items can never outvote one strongly-grounded
+    primary source."""
+    from research_engine.pipeline.claim_support import SUPPORT_FACTOR
     accepted = [e for e in evidence_items if e.status != EvidenceStatus.REJECTED]
     if not accepted:
         return AggregateStrength(0.0, 0, 0, 5, {}, "no accepted evidence")
 
-    tier_scores = [TIER_WEIGHT.get(e.source_tier, 0.2) * e.confidence for e in accepted]
-    best_single = max(tier_scores)
+    def _ev_weight(e: Evidence) -> float:
+        base = TIER_WEIGHT.get(e.source_tier, 0.2) * max(0.0, e.confidence)
+        sv = getattr(e, "support_verdict", "") or ""
+        factor = SUPPORT_FACTOR.get(sv, 0.7)
+        return base * factor
 
-    # independence-adjusted corroboration boost
+    weighted = [_ev_weight(e) for e in accepted]
+    best_single = max(weighted)
+
+    # independence-adjusted corroboration boost — only STRONG support
+    # corroborates (PARTIALLY/WEAKLY add diminishing weight)
     independent_count = 0
-    for i, a in enumerate(accepted):
+    strong_pool = [e for e in accepted
+                   if (getattr(e, "support_verdict", "")
+                       in ("ENTAILS", "STRONGLY_SUPPORTS", ""))
+                   ]
+    pool = strong_pool or accepted
+    for i, a in enumerate(pool):
         deps = 0
-        for j, b in enumerate(accepted):
+        for j, b in enumerate(pool):
             if i == j:
                 continue
             v = classify_independence(a, b)
@@ -114,6 +132,7 @@ def aggregate_claim_strength(claim: Claim, evidence_items: list[Evidence]) -> Ag
         "contradiction_penalty": round(contra_penalty, 3),
         "recency_penalty": round(recency_penalty, 3),
         "independent_sources": independent_count,
+        "support_weighted": True,
     }
     parts = [f"best={components['best_single']}", f"indep={independent_count}"]
     if corr_boost:
