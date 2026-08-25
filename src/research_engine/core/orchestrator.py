@@ -52,6 +52,8 @@ class Orchestrator:
         self.sm = StateMachine(self.repos)
         self.budget = Budget(cfg, project)
         self._stop_requested = False
+        self._pause_requested = False
+        self.trace_id = ""            # platform trace correlation (spec #50)
 
     # ------------------------------------------------------------------ setup
     @classmethod
@@ -95,6 +97,26 @@ class Orchestrator:
     def request_stop(self) -> None:
         self._stop_requested = True
 
+    def request_pause(self) -> None:
+        """Cooperative pause: takes effect at the next phase boundary."""
+        self._pause_requested = True
+
+    def _check_pause(self) -> bool:
+        """Returns True if a pause was requested and applied. The project is
+        left in PAUSED state; resume() continues cleanly from the checkpoint."""
+        if not self._pause_requested or self.project.state in (
+                ProjectState.PAUSED, ProjectState.CONVERGED,
+                ProjectState.COMPLETED, ProjectState.FAILED):
+            return False
+        self.sm.transition(self.project, ProjectState.PAUSED,
+                           "paused by user/job control")
+        self.events.record(self.project.id, "paused", "orchestrator",
+                           metadata={"iteration": self.project.current_iteration},
+                           human_line=f"[{_ts()}] PAUSED at iteration "
+                                      f"{self.project.current_iteration}")
+        self.persist_checkpoint()
+        return True
+
     # ------------------------------------------------------------------ main loop
     def run(self, max_iterations: int | None = None) -> ResearchProject:
         p = self.project
@@ -118,6 +140,8 @@ class Orchestrator:
                     p.stop_reason = StopReason.USER_STOPPED
                     self.sm.transition(p, ProjectState.CONVERGED, "user requested stop")
                     break
+                if self._check_pause():
+                    return p
                 if p.state == ProjectState.SEARCHING:
                     self._phase_search_fetch_extract()
                 elif p.state == ProjectState.ANALYZING_GAPS:
@@ -147,6 +171,7 @@ class Orchestrator:
     def resume(self) -> ResearchProject:
         """Resume a paused/interrupted project from its persisted state."""
         p = self.project
+        self._pause_requested = False
         gate = p.review_gate_pending
         if gate == ReviewGate.AFTER_PROBLEM_DEFINITION.value and p.state == ProjectState.PAUSED:
             self.sm.transition(p, ProjectState.PLANNED, "resumed after problem review")
@@ -594,9 +619,11 @@ def build_default_registry(cfg: AppConfig) -> ProviderRegistry:
     from research_engine.providers.academic.semantic_scholar import SemanticScholarProvider
     from research_engine.providers.search.duckduckgo import DuckDuckGoProvider, SearxngProvider
     timeout = cfg.network.timeout_seconds
-    reg.register_search("web", DuckDuckGoProvider(timeout=timeout))
-    if cfg.search.searxng_base_url:
-        reg.register_search("web_searxng", SearxngProvider(cfg.search.searxng_base_url, timeout))
+    if cfg.search.web_provider == "duckduckgo":
+        reg.register_search("web", DuckDuckGoProvider(timeout=timeout))
+    elif cfg.search.web_provider == "searxng" and cfg.search.searxng_base_url:
+        reg.register_search("web", SearxngProvider(cfg.search.searxng_base_url, timeout))
+    # web_provider == "none" -> offline: no web search registered (#98/#100)
     providers = {
         "openalex": OpenAlexProvider(timeout=timeout),
         "crossref": CrossrefProvider(timeout=timeout),

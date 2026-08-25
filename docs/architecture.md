@@ -74,3 +74,30 @@ USER ──► ORCHESTRATOR ──► workers ──► SQLite + JSONL + reports
 - Methodology designer → benchmark/method comparison rows feed directly (spec #68)
 - MCP/REST → tool interfaces map 1:1 (`ask`, `map`, `trace-claim`, `verify`, ...)
 - Watched sources/queries → `source_versions` table is the alerting seed (spec #100)
+
+## Phase 4: control plane / engine / knowledge split
+
+```
+CLI ─┐
+API ─┼→ Application Services → Orchestrator/Repos → SQLite
+MCP ─┘
+         └→ ServiceContext: platform DB + scheduler + event bus
+```
+
+- **Control plane** (`platform/`, `services/`, `storage/platform_db.py`):
+  jobs, tasks (leases/heartbeats/dead-letter), scheduler, watchers, backups,
+  metrics/events/logging, resilience primitives. State is authoritative in
+  `platform.sqlite`; the scheduler holds no in-memory truth (#118).
+- **Research engine** (`core/`, `pipeline/`, `reasoning/`): unchanged phases
+  1–3 behavior; gained cooperative pause (`request_pause` at phase boundaries)
+  and trace ids.
+- **Knowledge layer**: per-project SQLite + reports — untouched.
+
+Interfaces are thin adapters; domain logic lives once (#158/#161/#162).
+Distributed deployment remains explicitly out of scope (#163); boundaries that
+would go remote: TaskScheduler, EventBus, ProviderRegistry.
+
+New failure surfaces: `platform/errors.py` classification drives retry
+policies and dead-lettering; `platform/resilience.py` circuit breakers wrap
+provider chains. Experiments run under `experiments/runner.py` sandbox with
+results flowing through the existing ResultIngestor.

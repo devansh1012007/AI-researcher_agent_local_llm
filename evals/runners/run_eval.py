@@ -106,6 +106,13 @@ def main():
             failures.append("quote_correctness")
         if task.get("expect_gaps") and not scores.gaps_discovered:
             failures.append("expected_gaps_but_none_found")
+        # Phase 4 lifecycle gate: project must reach a clean terminal state
+        if task.get("expect_completed"):
+            state = orch.project.state.value
+            if state != "COMPLETED":
+                failures.append(f"lifecycle_state_{state}")
+            if not getattr(orch, "ws", None) or                not any((orch.ws.reports).glob("*.md")):
+                failures.append("no_reports_generated")
         status = "PASS" if not failures else f"FAIL({','.join(failures)})"
         print(scores.summary())
         print(f"quality gates: {status}")

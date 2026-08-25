@@ -56,3 +56,14 @@ LLM providers: `ollama | openai_compatible | llama_cpp | mock`. Unknown provider
 - Generation always produces COMPETING families (+null/artifact) linked via `alternative_of`; a lone hypothesis without rivals is a spec violation.
 - Eval runner offline mode uses a FRESH temp workspace per task — project IDs derive from the question, so rerunning in a shared workspace collides per-process ID counters with stale rows (caused a real flake).
 - `tests/fakes.py` FakeAcademicProvider generates query-hashed arXiv URLs so tier ratios stay realistic; keep that property when touching fixtures.
+
+## Phase 4 specifics
+
+- Platform state lives in `<data_dir>/platform.sqlite` (PlatformDB) — jobs/tasks/watchers/events/incidents. Project knowledge stays in per-project DBs. Never move scheduler state into Python globals (#118).
+- `save_job` treats terminal statuses (COMPLETED/FAILED/FAILED_PARTIAL/CANCELLED) as ABSORBING: stale in-memory job objects cannot resurrect a finished/cancelled job. If adding new terminal states, update the SQL guard.
+- Job finalization is event-driven (`_advance_one` after every task completion) — never rely on idle-poll timing for lifecycle correctness.
+- Task claiming is a single atomic conditional UPDATE with lease columns; `lease_expires_at` is a real indexed column, not just JSON — keep both in sync when touching add_task/update_task.
+- Experiment sandbox = audit-hook guard (network/subprocess/write containment) + RLIMIT_AS/CPU/NPROC + wall timeout + scrubbed env. The guard must run BEFORE user code via `-c` prefix; patching `socket.socket` breaks ssl imports.
+- API binds 127.0.0.1 by default; `cmd_serve` hard-refuses non-local binding without an auth token — tests must pass host explicitly or they will start uvicorn and hang.
+- MCP server is hand-rolled JSON-RPC over stdio; permission checks happen in `_call_tool` via PermissionEngine. Implication is downward-only (RESEARCH grants READ; READ does NOT grant RESEARCH) — the backwards check was a real security bug once.
+- Eval runner offline mode uses fresh temp workspaces per task AND `expect_completed` gate asserts lifecycle state; quality gates live in `evals/runners/run_eval.py`.

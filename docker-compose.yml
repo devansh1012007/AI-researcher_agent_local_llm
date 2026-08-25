@@ -1,0 +1,19 @@
+# Optional reproducible setup (spec #150/#151). Core runs fine without this.
+services:
+  research-app:
+    build: .
+    ports: ["8000:8000"]
+    environment:
+      GAR_PLATFORM__API__AUTH_TOKEN: ${GAR_TOKEN:?set GAR_TOKEN}
+      GAR_PLATFORM__API__HOST: 0.0.0.0
+      GAR_MODELS__EXTRACTOR__PROVIDER: ollama
+      GAR_MODELS__REASONING__PROVIDER: ollama
+    volumes:
+      - ./research_data:/data
+    # talk to host ollama:
+    extra_hosts: ["host.docker.internal:host-gateway"]
+
+  searxng:                      # optional local meta-search (#115)
+    image: searxng/searxng:latest
+    profiles: ["search"]
+    ports: ["8888:8080"]

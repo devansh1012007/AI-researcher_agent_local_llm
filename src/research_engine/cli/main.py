@@ -636,6 +636,178 @@ def cmd_trace_hypothesis(args):
     console.print_json(json.dumps(chain, default=str))
 
 
+
+# ------------------------------------------------------------------ Phase 4
+def _ctx4(args=None):
+    from research_engine.services.context import get_context
+    return get_context()
+
+
+def cmd_jobs(args):
+    from research_engine.models.job import TERMINAL_STATUSES
+    ctx = _ctx4()
+    rows = ctx.platform_db.list_jobs(status=args.status or "",
+                                     project_id=args.project or "")
+    if not rows:
+        console.print("[dim]no jobs[/dim]")
+        return
+    t = Table(title="Research Jobs")
+    for col in ("JOB", "TYPE", "STATUS", "PRI", "PROJECT", "PROGRESS", "CREATED"):
+        t.add_column(col)
+    for j in rows:
+        prog = j.progress if isinstance(j.progress, dict) else {}
+        t.add_row(j.id, j.type, _status_color(j.status), str(j.priority),
+                  (j.project_id or "")[:24],
+                  f"done={prog.get('done', 0)} q={prog.get('queued', 0)}",
+                  j.created_at.strftime("%m-%d %H:%M"))
+    console.print(t)
+
+
+def _status_color(st: str) -> str:
+    colors = {"RUNNING": "cyan", "COMPLETED": "green", "FAILED": "red",
+              "FAILED_PARTIAL": "yellow", "PAUSED": "magenta",
+              "CANCELLED": "dim", "QUEUED": "white"}
+    c = colors.get(st, "white")
+    return f"[{c}]{st}[/{c}]"
+
+
+def cmd_job(args):
+    ctx = _ctx4()
+    j = ctx.platform_db.get_job(args.job_id)
+    if j is None:
+        console.print(f"[red]job not found: {args.job_id}[/red]")
+        return
+    console.print_json(json.dumps(json.loads(j.model_dump_json()), default=str))
+    tasks = ctx.platform_db.tasks_for_job(j.id)
+    if tasks:
+        t = Table(title="Tasks")
+        for col in ("TASK", "TYPE", "STATUS", "ATT", "PROFILE", "ERROR CAT"):
+            t.add_column(col)
+        for tk in tasks:
+            t.add_row(tk.id, tk.type, tk.status, f"{tk.attempts}/{tk.max_attempts}",
+                      tk.resource_profile, tk.error_category or "-")
+        console.print(t)
+
+
+def cmd_job_control(args):
+    ctx = _ctx4()
+    action, ident = args.action, args.id
+    sched = ctx.scheduler
+    ok = None
+    if action == "pause":
+        ok = sched.pause_job(ident)
+    elif action == "resume":
+        j = sched.resume_job(ident)
+        ok = j is not None
+        if ok:
+            ctx.start_scheduler()
+    elif action == "cancel":
+        ok = sched.cancel_job(ident)
+    elif action == "retry":
+        t = ctx.platform_db.requeue_task(ident)
+        ok = t is not None
+        if ok:
+            ctx.start_scheduler()
+            console.print(f"task {ident} requeued")
+            return
+    console.print(f"{action}: {'OK' if ok else 'REFUSED (missing/terminal)'} "
+                  f"-> {ident}")
+
+
+def cmd_serve(args):
+    import uvicorn
+    ctx = _ctx4()
+    host = args.host or ctx.cfg.platform.api.host
+    port = args.port or ctx.cfg.platform.api.port
+    if host not in ("127.0.0.1", "localhost", "::1") and \
+            not ctx.cfg.platform.api.auth_token:
+        raise SystemExit(
+            "refusing to bind externally without platform.api.auth_token "
+            "(spec #67) - set GAR_PLATFORM__API__AUTH_TOKEN")
+    from research_engine.api.app import create_app
+    uvicorn.run(create_app(ctx), host=host, port=port, log_level="info")
+
+
+def cmd_mcp(args):
+    from research_engine.mcp_server.server import McpServer
+    McpServer(_ctx4()).serve_forever()
+
+
+def cmd_watch_add(args):
+    from research_engine.services.watcher_service import WatcherCreate, WatcherService
+    w = WatcherService(_ctx4()).create(WatcherCreate(
+        project_id=args.project_id, query=args.query,
+        frequency_hours=args.every_hours,
+        source_scope=[x.strip() for x in args.scope.split(",") if x.strip()],
+        action=args.action))
+    console.print(f"watcher {w['id']} registered "
+                  f"(every {w['frequency_hours']}h, scope={w['source_scope']})")
+
+
+def cmd_watch_list(args):
+    from research_engine.services.watcher_service import WatcherService
+    ws = WatcherService(_ctx4()).list(args.project)
+    if not ws:
+        console.print("[dim]no watchers[/dim]")
+        return
+    t = Table(title="Watchers")
+    for col in ("ID", "PROJECT", "QUERY", "EVERY", "ENABLED", "LAST RUN"):
+        t.add_column(col)
+    for w in ws:
+        last = (w.get("last_run_at") or "never")[:19]
+        t.add_row(w["id"], (w["project_id"] or "")[:20], w["query"][:40],
+                  f"{w['frequency_hours']}h", str(w["enabled"]), last)
+    console.print(t)
+
+
+def cmd_watch_run(args):
+    from research_engine.services.watcher_service import WatcherService
+    summary = WatcherService(_ctx4()).run_now(args.watcher_id)
+    console.print_json(json.dumps(summary))
+
+
+def cmd_backup(args):
+    from research_engine.platform.backup import backup_project
+    path = backup_project(_ctx4().data_dir, args.project_id, args.out)
+    console.print(f"backup written: {path} ({path.stat().st_size // 1024} KB)")
+
+
+def cmd_restore(args):
+    from research_engine.platform.backup import restore_project
+    report = restore_project(args.archive, _ctx4().data_dir,
+                             overwrite=args.overwrite)
+    console.print(f"verified {report['verified_files']} files; restored: "
+                  f"{', '.join(report['restored']) or 'nothing'}")
+
+
+def cmd_export_bundle(args):
+    from research_engine.platform.backup import export_bundle
+    path = export_bundle(_ctx4().data_dir, args.project_id, args.out)
+    console.print(f"bundle exported: {path}")
+
+
+def cmd_verify_archive(args):
+    from research_engine.platform.backup import verify_archive
+    result = verify_archive(args.archive)
+    status = "[green]VALID[/green]" if result["valid"] else "[red]CORRUPT[/red]"
+    console.print(f"{status} engine={result.get('engine_version')} "
+                  f"projects={result.get('project_ids')} "
+                  f"corrupt={result.get('corrupt')}")
+
+
+def cmd_doctor(args):
+    from research_engine.api.app import health_report
+    report = health_report(_ctx4())
+    icon = {"healthy": "[green]healthy[/green]",
+            "degraded": "[yellow]degraded[/yellow]",
+            "unavailable": "[red]unavailable[/red]"}
+    console.print(f"Overall: {icon[report['status']]}")
+    for name, check in report["checks"].items():
+        extra = "" if check["level"] == "healthy" else \
+            f" — {check.get('note') or check.get('detail') or ''}"
+        console.print(f"  {name:<12} {icon[check['level']]}{extra}")
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(prog="research", description="GAR local research engine")
     parser.add_argument("--config", help="path to gar.yaml")
@@ -804,6 +976,70 @@ def main(argv=None):
     p.add_argument("project_id")
     p.add_argument("hypothesis_id")
     p.set_defaults(fn=cmd_trace_hypothesis)
+
+
+    # --- Phase 4: platform ---
+    p = sub.add_parser("jobs", help="platform job queue visibility")
+    p.add_argument("--status", default="")
+    p.add_argument("--project", default="")
+    p.set_defaults(fn=cmd_jobs)
+
+    p = sub.add_parser("job", help="inspect one job incl. tasks")
+    p.add_argument("job_id")
+    p.set_defaults(fn=cmd_job)
+
+    p = sub.add_parser("job-control", help="pause/resume/cancel/retry a job or task")
+    p.add_argument("action", choices=["pause", "resume", "cancel", "retry"])
+    p.add_argument("id")
+    p.set_defaults(fn=cmd_job_control)
+
+    p = sub.add_parser("serve", help="run the REST API server")
+    p.add_argument("--host", default=None)
+    p.add_argument("--port", type=int, default=None)
+    p.set_defaults(fn=cmd_serve)
+
+    p = sub.add_parser("mcp", help="run the MCP server over stdio")
+    p.set_defaults(fn=cmd_mcp)
+
+    p = sub.add_parser("watch-add", help="register a research watcher")
+    p.add_argument("project_id")
+    p.add_argument("query")
+    p.add_argument("--every-hours", type=float, default=24.0)
+    p.add_argument("--scope", default="web",
+                   help="comma list: web,openalex,arxiv,crossref")
+    p.add_argument("--action", default="incremental_update",
+                   choices=["incremental_update", "notify_only"])
+    p.set_defaults(fn=cmd_watch_add)
+
+    p = sub.add_parser("watch-list", help="list watchers")
+    p.add_argument("--project", default="")
+    p.set_defaults(fn=cmd_watch_list)
+
+    p = sub.add_parser("watch-run", help="run a watcher tick now")
+    p.add_argument("watcher_id")
+    p.set_defaults(fn=cmd_watch_run)
+
+    p = sub.add_parser("backup", help="back up a project to a verified archive")
+    p.add_argument("project_id")
+    p.add_argument("out")
+    p.set_defaults(fn=cmd_backup)
+
+    p = sub.add_parser("restore", help="restore a project from an archive (verifies first)")
+    p.add_argument("archive")
+    p.add_argument("--overwrite", action="store_true")
+    p.set_defaults(fn=cmd_restore)
+
+    p = sub.add_parser("export-bundle", help="export portable research bundle")
+    p.add_argument("project_id")
+    p.add_argument("out")
+    p.set_defaults(fn=cmd_export_bundle)
+
+    p = sub.add_parser("verify-archive", help="validate an archive without restoring")
+    p.add_argument("archive")
+    p.set_defaults(fn=cmd_verify_archive)
+
+    p = sub.add_parser("doctor", help="system health checks (db/storage/llm/scheduler)")
+    p.set_defaults(fn=cmd_doctor)
 
     args = parser.parse_args(argv)
     args.fn(args)

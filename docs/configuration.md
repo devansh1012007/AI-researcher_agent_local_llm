@@ -1,62 +1,42 @@
 # Configuration
 
-One YAML file (`gar.yaml`, `gar.yml` or `config/gar.yaml`), env overrides via
-`GAR_SECTION__KEY=value`. See `gar.example.yaml` for a commented template.
+One YAML (`gar.yaml`, see `gar.example.yaml`) + env overrides
+(`GAR_SECTION__KEY=value`), now extended with the `platform` section (#112).
 
-## Reference
+## Platform section
 
 ```yaml
-mode: academic|startup              # default mode for new projects
-
-models:
-  extractor|reasoning|synthesis:
-    provider: ollama|openai_compatible|llama_cpp|mock
-    model: <model name>
-    base_url: ""                    # override provider default endpoint
-    temperature: 0.1
-    max_tokens: 2048
-    context_tokens: 8000
-    timeout_seconds: 120
-
-research:
-  max_iterations: 3                 # hard stop
-  max_queries_per_iteration: 8
-  max_documents: 50                 # parsed documents budget
-  max_llm_calls: 300                # hard stop
-  max_wall_clock_minutes: 60        # hard stop
-  new_evidence_threshold: 0.10      # converged when new/total below this (and >=10 ev)
-  duplicate_rate_converged: 0.7     # converged when rejection/dup rate above this
-  review_gates_enabled: false       # pause at AFTER_PROBLEM_DEFINITION etc.
-
-network:
-  timeout_seconds: 20
-  max_retries: 3
-
-resources:
-  max_parallel_fetches: 5           # IO-bound; safe to raise
-  max_parallel_llm_tasks: 1         # keep at 1 locally
-  max_document_size_mb: 10
-  max_chunk_chars: 6000             # deterministic chunking target
-  chunk_overlap_chars: 400
-
-search:
-  web_provider: duckduckgo          # or searxng (+ base_url)
-  results_per_query: 10
-  academic_providers: [openalex, crossref, arxiv]
-  semantic_scholar_api_key: ""
-  cache_ttl_hours: 168
-
-storage:
-  data_dir: research_data           # per-project workspaces live here
+platform:
+  mode: local                 # local|hybrid|online  (env modes #100)
+  profile: balanced           # minimal|balanced|high_memory|cpu_only|offline (#152)
+  scheduler: {max_jobs: 1, worker_threads: 4, lease_seconds: 120,
+              heartbeat_seconds: 15, profile_caps: {}}
+  api: {enabled: true, host: "127.0.0.1", port: 8000, auth_token: ""}
+  mcp: {enabled: true}
+  security: {local_only: true, privacy_mode: false,
+             data_classification: INTERNAL, allowed_roots: []}
+  experiments: {enabled: true, sandbox: true, timeout_seconds: 1800,
+                memory_mb: 4096, cpu_seconds: 1800, network_enabled: false,
+                require_human_approval: true}
 ```
 
-## Precedence
+## Environment modes (#100)
 
-defaults < gar.yaml < `GAR_*` environment variables
-(e.g. `GAR_MODELS__EXTRACTOR__PROVIDER=mock`).
+- `LOCAL_ONLY` / privacy_mode: no external calls at all — retrieval over
+  existing evidence, reasoning, reports still work (#98)
+- `HYBRID`: local models + external search
+- `ONLINE`: additionally uses explicitly configured external services
 
-## Reproducibility
+Profiles apply automatic limit overrides on load (e.g. `offline` zeroes
+network caps; `cpu_only` disables LLM_LARGE concurrency).
 
-Each project snapshots the effective research/resources config, model roles and prompt
-versions into `project.config_snapshot` at creation — visible in every generated
-report's Methodology section.
+## Secrets (#66/#113)
+
+Never in YAML committed to disk with real values; use env:
+
+```bash
+GAR_PLATFORM__API__AUTH_TOKEN=...
+GAR_SEARCH__SEMANTIC_SCHOLAR_API_KEY=...
+```
+
+See `.env.example`.

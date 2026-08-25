@@ -133,6 +133,31 @@ docs/            architecture & subsystem docs
 research_data/   per-project workspaces (gitignored)
 ```
 
+## Phase 4: platform capabilities
+
+| Area | What the system does |
+|---|---|
+| Long-running jobs | persistent job/task model; survives restarts; pause/resume/cancel; FAILED_PARTIAL with retained work; dead-letter + manual retry |
+| Scheduler | lease+heartbeat ownership; priority classes; job dependencies; resource-profile concurrency caps; startup reconciliation |
+| REST API | FastAPI on localhost by default; async jobs (202 + polling); SSE event stream; structured errors; OpenAPI at /docs |
+| MCP | stdio JSON-RPC server exposing 19 tools + resources; permission-gated (READ default); long ops return job ids |
+| Experiments | sandboxed local runner (audit hooks, rlimits, no network by default); reproducibility manifests; artifacts; comparison verdicts |
+| Observability | JSONL structured logs w/ trace ids + secret redaction; metrics registry w/ resource telemetry; incident log; /health /ready |
+| Reliability | error classification → per-class retry policies; provider circuit breakers + failover; token-bucket rate limits; verified backup/restore archives |
+| Living research | watchers detect new/changed sources by content hash; incremental extraction only; SOURCE_UPDATED events flag affected claims |
+| Security | untrusted-content prompt boundaries; filesystem sandbox; minimal env for children; external API binding requires auth token |
+
+## Platform quickstart
+
+```bash
+research serve                          # REST API  (127.0.0.1:8000, /docs)
+research mcp                            # MCP over stdio
+research jobs                           # queue visibility
+research watch-add <proj> "query" --every-hours 12   # living research
+research backup <proj> backup.tar.gz    # verified archive
+research doctor                         # health summary
+```
+
 ## Limitations
 
 - Extraction quality depends on the local model; small models yield less.
@@ -141,10 +166,8 @@ research_data/   per-project workspaces (gitignored)
 - Paper similarity uses TF-IDF clustering, not deep embeddings (swap point exists).
 - Hypothesis/methodology generation deferred by design — the data model is ready.
 
-## Roadmap (Phase 3)
+## Roadmap
 
-1. Hypothesis generation from the claim/evidence/contradiction graph
-2. Methodology designer on top of benchmark comparisons
-3. Watched sources/queries → incremental re-research alerts
-4. MCP server exposing existing tool interfaces
-5. REST API over the orchestrator/memory layers
+- UI dashboards over platform_events (alerts backend exists, #133)
+- Model evaluation registry-driven automatic routing (#79/#80)
+- Optional distributed workers behind TaskScheduler/EventBus interfaces (#117)

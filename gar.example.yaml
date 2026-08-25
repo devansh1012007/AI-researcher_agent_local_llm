@@ -58,3 +58,33 @@ embeddings:
 
 storage:
   data_dir: research_data
+
+platform:                     # Phase 4: platform lifecycle (docs/configuration.md)
+  mode: local                 # local | hybrid | online  (env modes, spec #100)
+  profile: balanced           # minimal | balanced | high_memory | cpu_only | offline
+  scheduler:
+    max_jobs: 1               # concurrent deep-research jobs
+    worker_threads: 4
+    lease_seconds: 120
+    heartbeat_seconds: 15
+    profile_caps: {}          # e.g. {NETWORK_LIGHT: 5, LLM_LARGE: 1}
+  api:
+    enabled: true
+    host: "127.0.0.1"         # NEVER expose without setting auth_token (#67)
+    port: 8000
+    auth_token: ""            # or env GAR_PLATFORM__API__AUTH_TOKEN
+  mcp:
+    enabled: true             # `research mcp` serves tools over stdio
+  security:
+    local_only: true
+    privacy_mode: false       # true => zero external calls (#99)
+    data_classification: INTERNAL   # PUBLIC|INTERNAL|SENSITIVE|LOCAL_ONLY
+    allowed_roots: []         # extra sandbox roots; defaults to data_dir
+  experiments:
+    enabled: true
+    sandbox: true             # audit-hook + rlimits isolation (#37)
+    timeout_seconds: 1800
+    memory_mb: 4096
+    cpu_seconds: 1800
+    network_enabled: false    # experiments are offline by default
+    require_human_approval: true

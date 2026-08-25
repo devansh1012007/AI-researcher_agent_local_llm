@@ -1,0 +1,21 @@
+{
+  "tasks": [
+    {
+      "id": "p4_platform_job_flow",
+      "mode": "academic",
+      "question": "How do retrieval-augmented generators handle temporal knowledge drift?",
+      "max_iterations": 1,
+      "quality_gates": {
+        "min_evidence": 0,
+        "min_sources": 0,
+        "quote_correctness_min": 0.9,
+        "citation_coverage_min": 0.9,
+        "primary_ratio_min": 0.15,
+        "duplicate_max": 0.5,
+        "subq_coverage_min": 0.0
+      },
+      "notes": "Phase 4 acceptance: project runs to COMPLETED through the platform job system (scheduler + leases), events persisted, reports generated. Retrieval gates relaxed because the assertion target is lifecycle correctness, not retrieval volume.",
+      "expect_completed": true
+    }
+  ]
+}

@@ -69,3 +69,18 @@ def make_orchestrator(cfg, fake_registry):
                                   question_raw=question, mode=mode)
         return OfflineOrchestrator(cfg, project, fake_registry, llm=llm, fail_urls=fail_urls)
     return factory
+
+
+@pytest.fixture()
+def platform_ctx(tmp_path):
+    """Isolated ServiceContext on a temp data dir; network disabled so jobs
+    stay offline (fake-free path: providers configured to 'none')."""
+    from research_engine.services.context import ServiceContext
+    c = AppConfig.load()
+    c.storage.data_dir = str(tmp_path / "data")
+    c.research.max_iterations = 1
+    c.search.web_provider = "none"
+    c.search.academic_providers = []
+    ctx = ServiceContext(cfg=c)
+    yield ctx
+    ctx.stop_scheduler()

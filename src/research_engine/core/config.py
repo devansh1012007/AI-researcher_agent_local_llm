@@ -84,6 +84,79 @@ class SearchConfig(BaseModel):
     cache_ttl_hours: int = 168
 
 
+class SchedulerSection(BaseModel):
+    max_jobs: int = 1                  # concurrent research jobs (laptop reality)
+    worker_threads: int = 4
+    lease_seconds: float = 120.0
+    heartbeat_seconds: float = 15.0
+    profile_caps: dict[str, int] = Field(default_factory=dict)
+
+
+class ApiConfig(BaseModel):
+    enabled: bool = True
+    host: str = "127.0.0.1"            # NEVER default to 0.0.0.0 (spec #67)
+    port: int = 8000
+    auth_token: str = ""               # required when host != 127.0.0.1
+
+
+class McpConfig(BaseModel):
+    enabled: bool = True
+
+
+class SecurityConfig(BaseModel):
+    local_only: bool = True            # spec #100 environment modes
+    privacy_mode: bool = False         # spec #99: no external calls at all
+    data_classification: str = "INTERNAL"   # PUBLIC|INTERNAL|SENSITIVE|LOCAL_ONLY
+    allowed_roots: list[str] = Field(default_factory=list)  # filesystem sandbox (#65)
+    redact_secrets_in_logs: bool = True
+
+
+class ExperimentsConfig(BaseModel):
+    enabled: bool = True
+    sandbox: bool = True
+    timeout_seconds: int = 1800
+    memory_mb: int = 4096
+    cpu_seconds: int = 1800
+    network_enabled: bool = False      # default OFF (spec #37/#45)
+    require_human_approval: bool = True
+
+
+class PlatformConfig(BaseModel):
+    mode: str = "local"                # LOCAL_ONLY | HYBRID | ONLINE (spec #100)
+    profile: str = "balanced"          # minimal | balanced | high_memory | cpu_only | offline (#152)
+    scheduler: SchedulerSection = Field(default_factory=SchedulerSection)
+    api: ApiConfig = Field(default_factory=ApiConfig)
+    mcp: McpConfig = Field(default_factory=McpConfig)
+    security: SecurityConfig = Field(default_factory=SecurityConfig)
+    experiments: ExperimentsConfig = Field(default_factory=ExperimentsConfig)
+
+    def effective_environment(self) -> str:
+        """Resolve LOCAL_ONLY/HYBRID/ONLINE from mode + privacy switches."""
+        if self.security.privacy_mode:
+            return "LOCAL_ONLY"
+        return {"local": "LOCAL_ONLY", "hybrid": "HYBRID",
+                "online": "ONLINE"}.get(self.mode.lower(), "HYBRID")
+
+    def apply_profile(self) -> None:
+        """Resource profiles (spec #152): named presets that lower limits."""
+        profiles = {
+            "minimal": {"max_jobs": 1, "worker_threads": 2,
+                        "profile_caps": {"NETWORK_LIGHT": 2, "LLM_SMALL": 1,
+                                         "CPU_LIGHT": 1}},
+            "cpu_only": {"worker_threads": 3,
+                         "profile_caps": {"LLM_LARGE": 0, "LLM_SMALL": 1}},
+            "offline": {"max_jobs": 1, "worker_threads": 2,
+                        "profile_caps": {"NETWORK_LIGHT": 0, "NETWORK_HEAVY": 0}},
+            "high_memory": {},
+            "balanced": {},
+        }
+        overrides = profiles.get(self.profile)
+        if not overrides:
+            return
+        for key, val in overrides.items():
+            setattr(self.scheduler, key, val)
+
+
 class AppConfig(BaseModel):
     models: LLMConfig = Field(default_factory=LLMConfig)
     research: ResearchConfig = Field(default_factory=ResearchConfig)
@@ -92,6 +165,7 @@ class AppConfig(BaseModel):
     storage: StorageConfig = Field(default_factory=StorageConfig)
     search: SearchConfig = Field(default_factory=SearchConfig)
     embeddings: EmbeddingsConfig = Field(default_factory=EmbeddingsConfig)
+    platform: PlatformConfig = Field(default_factory=PlatformConfig)
 
     @classmethod
     def load(cls, path: str | Path | None = None) -> "AppConfig":
@@ -102,6 +176,7 @@ class AppConfig(BaseModel):
             data = yaml.safe_load(cfg_file.read_text()) or {}
         cfg = cls.model_validate(data)
         cfg.apply_env_overrides()
+        cfg.platform.apply_profile()
         return cfg
 
     def apply_env_overrides(self) -> None:
