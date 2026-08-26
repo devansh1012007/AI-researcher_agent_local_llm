@@ -1,0 +1,26 @@
+{
+  "config": {
+    "kind": "specialist_chain",
+    "stages": [
+      [
+        "foresight",
+        "TREND_SCAN"
+      ]
+    ]
+  },
+  "duration_s": 0.05,
+  "metrics": {
+    "claims": 0,
+    "evidence_after": 2,
+    "gaps": 0,
+    "seed_evidence": 2,
+    "stage_statuses": [
+      "SUCCEEDED"
+    ]
+  },
+  "updated_reason": "phase5 eval baselines",
+  "versions": {
+    "git": "f9e3d8d",
+    "python": "3.12.3"
+  }
+}

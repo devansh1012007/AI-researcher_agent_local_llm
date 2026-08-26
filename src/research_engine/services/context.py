@@ -37,6 +37,23 @@ class ServiceContext:
         self.bus = global_bus()
         self._persister = None
         self._start_event_persistence()
+        # Phase 6 §24: production LLM calls feed the model-perf registry.
+        try:
+            from research_engine.providers.llm import telemetry as _llm_tel
+            _db = self.platform_db
+            _llm_tel.install_sink(
+                lambda p, m, r, ok, lat, sf=0: _db.record_llm_call(
+                    p, m, r, ok, lat, sf))
+        except Exception:
+            pass
+        # Phase 6 §52: ship the baseline policies as ACTIVE — they ARE the
+        # shipped deterministic behavior. Idempotent; never an adaptation.
+        try:
+            from research_engine.adaptive.policies import (
+                ensure_baseline_policies)
+            ensure_baseline_policies(self.platform_db)
+        except Exception:
+            pass
         self._scheduler = None
         self._lock = threading.Lock()
 
@@ -73,10 +90,12 @@ class ServiceContext:
     def _wire_runners(self) -> None:
         from research_engine.platform.job_runners import (
             make_deep_research_runner, make_experiment_runner, make_report_runner,
+            make_specialist_runner,
         )
         s = self._scheduler
         assert s is not None
-        dr = make_deep_research_runner(self.cfg, self.bus)
+        dr = make_deep_research_runner(self.cfg, self.bus,
+                                       platform_db=self.platform_db)
         s.register_runner("DEEP_RESEARCH", lambda t: dr(t, s.control_flag))
         ex = make_experiment_runner(self.cfg)
         s.register_runner("RUN_EXPERIMENT", lambda t: ex(t, s.control_flag))
@@ -86,6 +105,14 @@ class ServiceContext:
         s.register_runner("WATCHER_TICK", lambda t: wr(t))
         iu = _make_incremental_update_runner(self)
         s.register_runner("INCREMENTAL_UPDATE", lambda t: iu(t))
+        sp = make_specialist_runner(self, self.cfg)
+        s.register_runner("SPECIALIST_TASK", lambda t: sp(t, s.control_flag))
+        try:
+            from research_engine.specialists.bootstrap import (
+                ensure_builtin_specialists)
+            ensure_builtin_specialists()
+        except Exception:
+            pass
 
 
 _ctx: ServiceContext | None = None

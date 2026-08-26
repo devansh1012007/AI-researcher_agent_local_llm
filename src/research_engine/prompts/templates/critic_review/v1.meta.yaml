@@ -1,0 +1,6 @@
+task: independent_research_critique
+roles: [reasoning]
+notes: >
+  Phase 6 §43 independence requirement: critic runs on the reasoning-role
+  model (never synthesis) with a dedicated prompt. Output is advisory
+  findings only; it can never mutate reports.

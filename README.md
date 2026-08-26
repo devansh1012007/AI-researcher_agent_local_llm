@@ -45,6 +45,12 @@ See [docs/architecture.md](docs/architecture.md) and the subsystem docs:
 [research_graph.md](docs/research_graph.md),
 [literature_intelligence.md](docs/literature_intelligence.md),
 [startup_specialist.md](docs/startup_specialist.md),
+[specialists.md](docs/specialists.md) (Phase-5 specialist ecosystem,
+registry, routing and cross-domain intelligence),
+[cross_domain_research.md](docs/cross_domain_research.md),
+[continuous_intelligence.md](docs/continuous_intelligence.md) (Phase-6
+adaptive routing, policy registry, outcome learning — with
+[policy_registry.md](docs/policy_registry.md)),
 [persistent_memory.md](docs/persistent_memory.md),
 [contradiction_engine.md](docs/contradiction_engine.md),
 [research_evaluation.md](docs/research_evaluation.md).

@@ -468,9 +468,54 @@ class Orchestrator:
         problem = self.repos.problems.all(p.id)[0]
         budget = min(self.cfg.research.max_queries_per_iteration,
                      self.budget.queries_left())
+        # Phase 6 §19/§47: learned query-strategy tie-breaks and dynamic
+        # iteration budgets. Both are INERT on an unlearned store (fresh
+        # workspace ⇒ no perf rows ⇒ identical behavior), keeping golden
+        # runs deterministic. Budget scaling additionally requires an
+        # explicitly activated non-baseline research_depth policy (§63).
+        family_utility, depth_enabled, targeted_boost = None, False, 0
+        try:
+            from research_engine.adaptive.policies import (
+                POLICY_DEPTH, POLICY_QUERY)
+            from research_engine.adaptive.store import platform_store
+            pstore = platform_store(self.cfg.storage.data_dir)
+            qp = pstore.active_policy(POLICY_QUERY)
+            if qp is not None:
+                min_samples = int((qp.get("body") or {}).get("min_samples", 20))
+                rows = pstore.list_query_family_perf()
+                total_q = sum(r["queries"] for r in rows)
+                if total_q >= min_samples and rows:
+                    by_fam: dict[str, float] = {}
+                    for r in rows:
+                        w = sum(x["queries"] for x in rows
+                                if x["family"] == r["family"]) or 1
+                        u = sum(x["avg_utility"] * x["queries"]
+                                for x in rows if x["family"] == r["family"]) / w
+                        by_fam[r["family"]] = round(u, 4)
+                    family_utility = by_fam
+            dp = pstore.active_policy(POLICY_DEPTH)
+            if dp is not None and dp["version"] != "baseline":
+                depth_enabled = True
+                targeted_boost = min(2, self.repos.contradictions.count(
+                    p.id, "resolved=0"))
+        except Exception:
+            family_utility, depth_enabled, targeted_boost = None, False, 0
+        if depth_enabled:
+            try:
+                from research_engine.adaptive.budget import \
+                    scale_iteration_budget
+                gains = [m.new_evidence_rate for m in self.repos.metrics.all(p.id)][-3:]
+                budget = min(scale_iteration_budget(
+                    budget, gains, policy_enabled=True,
+                    targeted_boost=targeted_boost,
+                    hard_cap=self.cfg.research.max_queries_per_iteration),
+                    self.budget.queries_left())
+            except Exception:
+                pass
         try:
             from research_engine.reasoning.adaptive_planner import AdaptivePlanner
-            step = AdaptivePlanner(self.router.reasoning, self.repos).plan_next(
+            step = AdaptivePlanner(self.router.reasoning, self.repos,
+                                   family_utility=family_utility).plan_next(
                 p.id, problem, plan, iteration=it, budget_queries=max(1, budget))
             created = list(step.queries)
             self.events.record(p.id, "adaptive_plan", "planning",

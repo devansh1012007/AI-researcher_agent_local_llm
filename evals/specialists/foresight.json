@@ -1,0 +1,12 @@
+{
+  "mode": "specialist_chain",
+  "question": "Which emerging shifts could disrupt bookkeeping automation?",
+  "stages": [["foresight", "TREND_SCAN"]],
+  "seed_corpus": [
+    ["A new open-source model release cut costs sharply.",
+     "new open-source model release cut costs sharply"],
+    ["New regulation will require audit logs for bookkeeping AI.",
+     "regulation will require audit logs"]
+  ],
+  "thresholds": {}
+}

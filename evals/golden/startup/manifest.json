@@ -1,0 +1,22 @@
+{
+  "id": "golden_startup_bookkeeping_india",
+  "mode": "startup",
+  "question": "Find promising startup opportunities around AI bookkeeping software for small businesses in India.",
+  "expected_invariants": [
+    "all_claims_traceable",
+    "no_ungrounded_synthesis_evidence",
+    "opportunity_scores_schema_v2",
+    "opportunities_have_evidence",
+    "report_generation_read_only"
+  ],
+  "quality_thresholds": {
+    "min_markets": 1,
+    "min_competitors": 2,
+    "min_pricing_plans": 2,
+    "min_opportunities": 1
+  },
+  "known_violations": {
+    "pricing_or_signal_linkage": "F-07"
+  },
+  "notes": "Deterministic startup corpus via make_fake_transport(startup_topics=...) seeded from the question; pain/pricing vocabulary guaranteed so analyzers have material. report_generation_read_only currently fails as KNOWN_VIOLATION F-01 (persist=False gate clobbered); becomes a hard gate when F-01 is fixed."
+}

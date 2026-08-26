@@ -51,9 +51,14 @@ _WHY_NOW_HINTS = re.compile(
 
 
 class StartupIntelligence:
-    def __init__(self, repos: Repositories, graph: GraphStore):
+    def __init__(self, repos: Repositories, graph: GraphStore,
+                 persist: bool = True):
         self.repos = repos
         self.graph = graph
+        # Decision: extraction can run compute-only (persist=False).
+        # Why: report generation must not mutate primary state (INV-004).
+        # Constraint: callers that intend persistence keep the default.
+        self._persist_entities = persist
 
     # ------------------------------------------------------------------ extraction
     def extract_all(self, project_id: str) -> dict:
@@ -154,6 +159,8 @@ class StartupIntelligence:
 
     def _persist_startup_entities(self, project_id: str, type_: str, entities: list) -> None:
         """Store as graph entities (attributes JSON) — one store for Phase 2 models."""
+        if not self._persist_entities:
+            return
         for e in entities:
             d = e.model_dump() if hasattr(e, "model_dump") else e.to_dict()
             d.pop("id", None); d.pop("project_id", None); d.pop("created_at", None)

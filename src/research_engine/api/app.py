@@ -12,7 +12,7 @@ import json
 import queue as _queue
 from typing import Any
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
+from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -244,7 +244,12 @@ def create_app(ctx: ServiceContext | None = None) -> FastAPI:
 
     @app.post("/tasks/{task_id}/retry")
     def retry_task(task_id: str, _: str = Depends(auth)) -> dict:
-        t = get_ctx().platform_db.requeue_task(task_id)
+        from research_engine.storage.platform_db import TaskNotRetryable
+        try:
+            t = get_ctx().platform_db.requeue_task(task_id)
+        except TaskNotRetryable as exc:
+            raise HTTPException(409, detail={"error": {
+                "code": "CONFLICT", "message": str(exc)}}) from exc
         if t is None:
             raise HTTPException(404, detail={"error": {
                 "code": "NOT_FOUND", "message": f"task {task_id} not found"}})
@@ -373,6 +378,175 @@ def create_app(ctx: ServiceContext | None = None) -> FastAPI:
     def startup_market_map(project_id: str = "", _: str = Depends(auth)) -> dict:
         pid = project_id or _latest_startup_pid()
         return _guard(lambda: _svc().run_mode(pid, "MARKET_DISCOVERY"))
+
+    # ------------------------------------------------- Phase 5 specialists
+    def _registry_catalog():
+        from research_engine.specialists.bootstrap import (
+            ensure_builtin_specialists)
+        from research_engine.specialists.runtime import get_registry
+        ensure_builtin_specialists()
+        return get_registry()
+
+    @app.get("/specialists")
+    def specialists_list(_: str = Depends(auth)) -> list[dict]:
+        out = []
+        for r in _registry_catalog().list_active():
+            d = r.descriptor
+            out.append({"specialist_id": d.specialist_id,
+                        "version": d.version, "name": d.name,
+                        "modes": d.supported_modes,
+                        "health": r.health.state.value})
+        return out
+
+    @app.get("/specialists/{sid}")
+    def specialists_get(sid: str, _: str = Depends(auth)) -> dict:
+        from fastapi import HTTPException
+        r = _registry_catalog().lookup(sid)
+        if r is None:
+            raise HTTPException(404, detail={"error": {
+                "code": "NOT_FOUND",
+                "message": f"unknown specialist {sid}"}})
+        d = r.descriptor
+        return {"specialist_id": d.specialist_id, "version": d.version,
+                "capabilities": {"modes": d.supported_modes,
+                                 "entity_types": d.entity_types,
+                                 "skills": d.skills},
+                "permissions": sorted(p.value for p in d.permissions),
+                "budgets": d.budgets.model_dump()}
+
+    @app.get("/specialists/{sid}/health")
+    def specialists_health(sid: str, _: str = Depends(auth)) -> dict:
+        from fastapi import HTTPException
+        r = _registry_catalog().lookup(sid)
+        if r is None:
+            raise HTTPException(404, detail={"error": {
+                "code": "NOT_FOUND", "message": f"unknown specialist {sid}"}})
+        return {"specialist_id": sid,
+                "state": r.health.state.value, "reason": r.health.reason}
+
+    @app.get("/projects/{project_id}/specialists")
+    def project_specialists(project_id: str,
+                            _: str = Depends(auth)) -> list[dict]:
+        return get_ctx().platform_db.list_specialist_invocations(project_id)
+
+    @app.post("/projects/{project_id}/cross-domain-research")
+    def cross_domain_research(project_id: str,
+                              body: dict = Body(default={}),
+                              _: str = Depends(auth)) -> dict:
+        """Submit the flagship RESEARCH_GAP_TO_STARTUP chain (§60/§79)."""
+        from research_engine.specialists.workflows import submit_stage
+        db = get_ctx().platform_db
+        stages = [("literature", "LITERATURE_REVIEW"),
+                  ("technology", "FEASIBILITY"),
+                  ("startup", "OPPORTUNITY_DISCOVERY")]
+        job_ids = [submit_stage(db, project_id, sid, i, mode=mode,
+                                routing_reason="api cross-domain-research")
+                   for i, (sid, mode) in enumerate(stages)]
+        ctx = get_ctx()
+        try:
+            ctx.start_scheduler()
+        except Exception:
+            pass
+        return {"project_id": project_id, "jobs": job_ids}
+
+    # ------------------------------------------- Phase 6 process intelligence
+    def _quality():
+        from research_engine.services.quality_service import QualityService
+        return QualityService(get_ctx())
+
+    @app.get("/quality")
+    def quality_platform(_: str = Depends(auth)) -> dict:
+        return _quality().dashboard("")
+
+    @app.get("/projects/{project_id}/quality")
+    def quality_project(project_id: str,
+                        _: str = Depends(auth)) -> dict:
+        return _quality().dashboard(project_id)
+
+    @app.get("/policies")
+    def policies_list(kind: str = "", _: str = Depends(auth)) -> list[dict]:
+        return _quality().list_policies(kind)
+
+    @app.post("/policies")
+    def policies_mutate(body: dict = Body(...),
+                        _: str = Depends(auth)) -> dict:
+        """Policy lifecycle (§52-§55). Every mutation is explicit and
+        audited; activation refuses out-of-bounds bodies."""
+        q = _quality()
+        action = body.get("action", "")
+        kind = body.get("kind", "")
+        version = body.get("version", "")
+        if action == "propose":
+            return q.propose_policy(kind, version, body.get("body") or {},
+                                    evaluation=body.get("evaluation"))
+        if action == "evaluate":
+            return q.record_evaluation(kind, version,
+                                       body.get("evaluation") or {})
+        if action == "activate":
+            return q.activate_policy(kind, version,
+                                     reason=body.get("reason", "api"))
+        if action == "rollback":
+            return q.rollback_policy(kind, reason=body.get("reason", "api"))
+        if action == "deactivate":
+            ok = q.registry.deactivate(kind, reason=body.get("reason", ""))
+            return {"deactivated": ok, "kind": kind}
+        if action == "compare":
+            return q.compare_policies(kind, body.get("version_a", ""),
+                                      body.get("version_b", ""))
+        from fastapi import HTTPException
+        raise HTTPException(422, detail={"error": {
+            "code": "INVALID_ACTION",
+            "message": f"unknown policy action {action!r}"}})
+
+    @app.post("/projects/{project_id}/feedback")
+    def feedback_submit(project_id: str, body: dict = Body(...),
+                        _: str = Depends(auth)) -> dict:
+        return _quality().submit_feedback(
+            project_id, body.get("target_kind", "report"),
+            body.get("target_id", ""), body.get("verdict", ""),
+            note=body.get("note", ""))
+
+    @app.get("/projects/{project_id}/feedback")
+    def feedback_list(project_id: str, _: str = Depends(auth)) -> list[dict]:
+        return _quality().list_feedback(project_id)
+
+    @app.get("/projects/{project_id}/decisions")
+    def decisions_list(project_id: str, kind: str = "",
+                       _: str = Depends(auth)) -> list[dict]:
+        return _quality().decisions(project_id, kind=kind)
+
+    @app.get("/projects/{project_id}/alerts")
+    def alerts_list(project_id: str, status: str = "open",
+                    _: str = Depends(auth)) -> list[dict]:
+        return sorted(_quality().alerts(project_id, status=status),
+                      key=lambda x: -float(x.get("score") or 0))
+
+    @app.post("/alerts/{alert_id}/ack")
+    def alert_ack(alert_id: str, _: str = Depends(auth)) -> dict:
+        ok = _quality().acknowledge_alert(alert_id)
+        from fastapi import HTTPException
+        if not ok:
+            raise HTTPException(404, detail={"error": {
+                "code": "NOT_FOUND", "message": f"unknown alert {alert_id}"}})
+        return {"alert_id": alert_id, "status": "acknowledged"}
+
+    @app.post("/projects/{project_id}/review")
+    def review_run(project_id: str, body: dict = Body(default={}),
+                   _: str = Depends(auth)) -> dict:
+        rev = _quality().review(project_id,
+                                level=body.get("level", "STANDARD"))
+        return {"review_id": rev["review_id"],
+                "dimensions": rev["dimensions"],
+                "findings": rev["findings"]}
+
+    @app.get("/projects/{project_id}/outcomes")
+    def outcomes_list(project_id: str, limit: int = 10,
+                      _: str = Depends(auth)) -> list[dict]:
+        rows = _quality().outcomes(project_id, limit=min(100, limit))
+        return [{"outcome_id": r["outcome_id"], "run_id": r["run_id"],
+                 "research_type": r["research_type"],
+                 "fingerprint": r["fingerprint"], "created_at": r["created_at"],
+                 **r["data"]} for r in rows]
 
     # -------------------------------------------------------------- errors
     @app.exception_handler(NotFoundError)

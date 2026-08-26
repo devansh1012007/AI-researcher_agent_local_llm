@@ -50,6 +50,35 @@ class Contradiction(Entity):
     conflict_type: str = "DIRECT_CONTRADICTION"
     evidence_a_ids: list[str] = Field(default_factory=list)
     evidence_b_ids: list[str] = Field(default_factory=list)
+    # Phase 5 §37: cross-specialist attribution. Empty for intra-domain
+    # contradictions; CROSS_DOMAIN_* conflict_types set these. Additive —
+    # no second contradiction system.
+    specialist_a: str = ""
+    specialist_b: str = ""
+    domain_difference: str = ""
+
+    def ensure_id(self) -> None:
+        super().ensure_id(self.PREFIX)
+
+
+class Connection(Entity):
+    """Cross-domain connection (Phase 5 §22). A proposed link between two
+    domain entities; NEVER valid merely because concepts are related."""
+    PREFIX: ClassVar[str] = "conn"
+
+    source_domain: str = ""          # e.g. research | technology | startup
+    target_domain: str = ""
+    source_entity: str = ""          # entity id in its domain store
+    target_entity: str = ""
+    relationship: str = ""           # CONNECTION_TYPES taxonomy
+    rationale: str = ""              # why this link, not just similarity
+    alternative_explanations: list[str] = Field(default_factory=list)
+    evidence_ids: list[str] = Field(default_factory=list)
+    # INV-015: confidence is COMPUTED from linked evidence quality via the
+    # canonical aggregator (INV-007); specialists never assert it directly.
+    confidence: float = 0.0
+    status: str = "PROPOSED"         # PROPOSED|VALIDATED|REJECTED|CONTESTED
+    requirements: dict = Field(default_factory=dict)  # {evidence_class: min}
 
     def ensure_id(self) -> None:
         super().ensure_id(self.PREFIX)

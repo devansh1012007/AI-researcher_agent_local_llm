@@ -212,6 +212,36 @@ CREATE TABLE IF NOT EXISTS assumptions2 (
     opportunity_id TEXT DEFAULT '',
     data TEXT NOT NULL
 );
+-- Phase 5 §22: cross-domain connections (INV-015: evidence-linked, one row
+-- per source/target/relationship triple)
+CREATE TABLE IF NOT EXISTS cross_connections (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    status TEXT DEFAULT 'PROPOSED',
+    data TEXT NOT NULL
+);
+-- graph tables bootstrapped here so read-only consumers (report generation,
+-- GATE F-01) never trigger lazy DDL on a project database (INV-004)
+CREATE TABLE IF NOT EXISTS graph_entities (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    type TEXT NOT NULL,
+    name_key TEXT NOT NULL,
+    data TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_ge_type ON graph_entities(project_id, type);
+CREATE INDEX IF NOT EXISTS idx_ge_name ON graph_entities(project_id, type, name_key);
+CREATE TABLE IF NOT EXISTS graph_relationships (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    source_id TEXT NOT NULL,
+    target_id TEXT NOT NULL,
+    rel_type TEXT NOT NULL,
+    data TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_gr_src ON graph_relationships(project_id, source_id);
+CREATE INDEX IF NOT EXISTS idx_gr_tgt ON graph_relationships(project_id, target_id);
+CREATE INDEX IF NOT EXISTS idx_gr_type ON graph_relationships(project_id, rel_type);
 -- note: hypothesis_id lives inside the JSON payload; filter via list+filter
 -- or add an indexed column in _migrate if query volume demands it.
 CREATE TABLE IF NOT EXISTS research_questions (
@@ -312,8 +342,7 @@ CREATE TABLE IF NOT EXISTS opportunity_decisions (
 # Each statement guarded separately so legacy DBs with pre-fix duplicates
 # keep working (index skipped + reported) until `repair-startup` runs.
 _STARTUP_UNIQUE_INDEXES = [
-    "CREATE UNIQUE INDEX IF NOT EXISTS ux_markets_slug ON startup_markets(project_id, market_slug)",
-    "CREATE UNIQUE INDEX IF NOT EXISTS ux_sizes_evidence ON market_sizes(project_id, json_extract(data,'$.evidence_id'))",
+    "CREATE UNIQUE INDEX IF NOT EXISTS ux_markets_slug ON startup_markets(project_id, market_slug)",    "CREATE UNIQUE INDEX IF NOT EXISTS ux_sizes_evidence ON market_sizes(project_id, json_extract(data,'$.evidence_id'))",
     "CREATE UNIQUE INDEX IF NOT EXISTS ux_personas_segment ON startup_personas(project_id, json_extract(data,'$.segment_id'))",
     "CREATE UNIQUE INDEX IF NOT EXISTS ux_jtbd_segment ON jtbd(project_id, segment_id)",
     "CREATE UNIQUE INDEX IF NOT EXISTS ux_alternatives_name ON alternatives(project_id, LOWER(json_extract(data,'$.name')))",
@@ -321,6 +350,7 @@ _STARTUP_UNIQUE_INDEXES = [
     "CREATE UNIQUE INDEX IF NOT EXISTS ux_pricing_plan ON pricing_plans(project_id, competitor_name, json_extract(data,'$.price_raw'), json_extract(data,'$.billing_period'))",
     "CREATE UNIQUE INDEX IF NOT EXISTS ux_channels_name ON distribution_channels(project_id, LOWER(json_extract(data,'$.name')))",
     "CREATE UNIQUE INDEX IF NOT EXISTS ux_techshift_fp ON tech_shifts(project_id, LOWER(SUBSTR(json_extract(data,'$.description'),1,80)))",
+    "CREATE UNIQUE INDEX IF NOT EXISTS ux_connection_triple ON cross_connections(project_id, json_extract(data,'$.source_entity'), json_extract(data,'$.target_entity'), json_extract(data,'$.relationship'))",
 ]
 
 

@@ -1,0 +1,12 @@
+{
+  "mode": "specialist_chain",
+  "question": "Competitive landscape for bookkeeping automation incumbents.",
+  "stages": [["competitive", "COMPETITIVE_ANALYSIS"]],
+  "seed_corpus": [
+    ["Reviewers compare it to an alternative called SheetWiz.",
+     "an alternative called SheetWiz instead of spreadsheets"],
+    ["LedgerBot raised pricing twice this year per reviews.",
+     "raised pricing twice this year"]
+  ],
+  "thresholds": {"gaps": 1}
+}

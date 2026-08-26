@@ -1,0 +1,11 @@
+{
+  "mode": "specialist_chain",
+  "question": "Map the literature on soft robotic grippers and identify research gaps.",
+  "stages": [["literature", "LITERATURE_REVIEW"]],
+  "seed_corpus": [
+    ["The soft gripper method outperforms rigid baselines on delicate objects.",
+     "outperforms rigid baselines on delicate objects"],
+    ["No public benchmark exists for produce-handling tasks.",
+     "no public benchmark for produce-handling"]
+  ]
+}

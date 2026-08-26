@@ -914,6 +914,292 @@ def _status_color(st: str) -> str:
     return f"[{c}]{st}[/{c}]"
 
 
+def cmd_specialists(args):
+    """Phase 5 §71: specialist ecosystem visibility."""
+    from research_engine.specialists.bootstrap import ensure_builtin_specialists
+    from research_engine.specialists.runtime import get_registry
+    ensure_builtin_specialists()
+    reg = get_registry()
+    if getattr(args, "sid", None):
+        r = reg.lookup(args.sid)
+        if r is None:
+            console.print(f"[red]unknown specialist: {args.sid}[/red]")
+            return
+        d = r.descriptor
+        console.print_json(json.dumps({
+            "specialist_id": d.specialist_id, "name": d.name,
+            "version": d.version, "description": d.description,
+            "modes": d.supported_modes, "skills": d.skills,
+            "entity_types": d.entity_types,
+            "permissions": sorted(p.value for p in d.permissions),
+            "budgets": d.budgets.model_dump(),
+            "lifecycle": r.lifecycle.value,
+            "health": {"state": r.health.state.value,
+                       "reason": r.health.reason},
+        }, default=str))
+        return
+
+    rows = []
+    for r in reg.list_active():
+        d = r.descriptor
+        perf = _ctx4().platform_db.list_specialist_perf(d.specialist_id)
+        runs = sum(p["runs"] for p in perf)
+        fails = sum(p["failures"] for p in perf)
+        rows.append((d.specialist_id, d.version, ",".join(
+            d.supported_modes[:3]), r.lifecycle.value,
+            f"{runs - fails}/{runs}"))
+    t = Table(title="Specialists")
+    for col in ("ID", "VER", "MODES", "LIFECYCLE", "OK/RUNS"):
+        t.add_column(col)
+    for row in rows:
+        t.add_row(*[str(x) for x in row])
+    console.print(t)
+
+
+def cmd_research_specialists(args):
+    """Which specialists ran on this project, why, and what came back."""
+    ctx = _ctx4()
+    inv = ctx.platform_db.list_specialist_invocations(args.project_id)
+    if not inv:
+        console.print("[dim]no specialist invocations[/dim]")
+        return
+    t = Table(title="Specialist invocations")
+    for col in ("SPECIALIST", "STATUS", "EVIDENCE@START", "WHEN"):
+        t.add_column(col)
+    for i in inv:
+        t.add_row(str(i.get("specialist_id")), str(i.get("status")),
+                  str(i.get("evidence_count")), str(i.get("created_at")))
+    console.print(t)
+
+
+# ------------------------- Phase 6: process intelligence commands ---------
+def _qs(args=None):
+    from research_engine.services.quality_service import quality_service
+    return quality_service(_ctx4(args))
+
+
+def cmd_quality(args):
+    """Research-process quality dashboard (§86)."""
+    from rich.json import JSON
+    qs = _qs(args)
+    d = qs.dashboard(getattr(args, "project_id", ""))
+    out = d["outcomes_summary"]
+    console.print(f"[b]Outcomes[/b] runs={out['runs']} "
+                  f"avg_gain={out['avg_gain']} "
+                  f"avg_grounded={out['avg_grounded_ratio']}")
+    t = Table(title="Specialist performance")
+    for col in ("SPECIALIST", "VER", "TASK_TYPE", "RUNS", "FAIL%", "LAT(s)"):
+        t.add_column(col)
+    for s in d["specialists"]:
+        t.add_row(s["specialist"], s["version"], s["task_type"],
+                  str(s["runs"]),
+                  f"{s['failure_rate']:.0%}" if s["failure_rate"]
+                  is not None else "-",
+                  str(s["avg_latency_s"]))
+    console.print(t)
+    mt = Table(title="Model performance")
+    for col in ("PROVIDER/MODEL", "ROLE", "CALLS", "FAIL%", "SCHEMA", "Q/S",
+                "VERDICT"):
+        mt.add_column(col)
+    for m in d["models"]:
+        mt.add_row(f"{m['provider']}/{m['model']}", m["role"], str(m["calls"]),
+                   f"{m['failure_rate']:.0%}",
+                   f"{m['schema_reliability']:.0%}",
+                   str(m["quality_per_second"]), m["verdict"])
+    console.print(mt)
+    qf = Table(title="Query family utility")
+    for col in ("FAMILY", "TASK_TYPE", "QUERIES", "AVG UTILITY"):
+        qf.add_column(col)
+    for r in d["query_families"][:10]:
+        qf.add_row(r["family"], r["task_type"], str(r["queries"]),
+                   str(r["avg_utility"]))
+    console.print(qf)
+    div = d["diversity"]
+    flags = [k for k, v in div.items() if v.get("concentration_flag")
+             or v.get("confirmation_loop_flag")]
+    if flags:
+        console.print(f"[yellow]concentration flags:[/yellow] {', '.join(flags)}")
+    drift = d["policy_drift"]
+    if drift.get("status") == "ok" and drift.get("significant_shifts"):
+        console.print(f"[yellow]policy drift shifts:[/yellow] "
+                      f"{drift['significant_shifts']}")
+    if getattr(args, "json", False):
+        console.print(JSON.from_data(d))
+
+
+def cmd_policy(args):
+    """Policy registry control (§52-§55): list/show/propose/evaluate/
+    activate/rollback/deactivate/compare. Activation is ALWAYS explicit."""
+    import json as _json
+    qs = _qs(args)
+    a = args
+    if a.action == "list":
+        rows = qs.list_policies(a.kind or "")
+        t = Table(title="Policies")
+        for col in ("KIND", "VERSION", "STATUS", "ACTIVATED", "REASON"):
+            t.add_column(col)
+        for prow in rows:
+            t.add_row(prow["kind"], prow["version"], prow["status"],
+                      prow.get("activated_at") or "-",
+                      (prow.get("activated_reason") or "")[:40])
+        console.print(t)
+        return
+    if a.action == "show":
+        pol = _ctx4().platform_db.get_policy(a.kind, a.version)
+        if pol is None:
+            console.print(f"[red]unknown policy {a.kind}@{a.version}[/red]")
+            raise SystemExit(1)
+        console.print(JSON.from_data(pol))
+        return
+    if a.action == "propose":
+        body = _json.loads(a.body or "{}")
+        ev = _json.loads(a.evaluation) if a.evaluation else None
+        out = qs.propose_policy(a.kind, a.version, body, evaluation=ev)
+        console.print(out)
+        return
+    if a.action == "evaluate":
+        out = qs.record_evaluation(a.kind, a.version,
+                                   _json.loads(a.evaluation))
+        console.print(out)
+        return
+    if a.action == "activate":
+        out = qs.activate_policy(a.kind, a.version,
+                                 reason=a.reason or "manual activation")
+        console.print({"activated": out})
+        return
+    if a.action == "rollback":
+        out = qs.rollback_policy(a.kind, reason=a.reason or "manual rollback")
+        console.print(out)
+        return
+    if a.action == "deactivate":
+        ok = _qs(args).registry.deactivate(a.kind, reason=a.reason or "")
+        console.print({"deactivated": ok})
+        return
+    if a.action == "compare":
+        console.print(JSON.from_data(
+            qs.compare_policies(a.kind, a.version_a, a.version_b)))
+        return
+
+
+def cmd_feedback(args):
+    """Submit/list explicit user feedback (§85). Stored separately from
+    objective metrics; never auto-applied to policy weights."""
+    qs = _qs(args)
+    if args.verdict:
+        out = qs.submit_feedback(args.project_id, args.target_kind,
+                                 args.target_id, args.verdict,
+                                 note=args.note or "")
+        console.print(out)
+        return
+    rows = qs.list_feedback(args.project_id)
+    if not rows:
+        console.print("[dim]no feedback recorded[/dim]")
+        return
+    t = Table(title="User feedback")
+    for col in ("ID", "TARGET", "VERDICT", "NOTE", "WHEN"):
+        t.add_column(col)
+    for r in rows:
+        t.add_row(r["feedback_id"], f"{r['target_kind']}:{r['target_id']}",
+                  r["verdict"], (r["note"] or "")[:40], r["created_at"])
+    console.print(t)
+
+
+def cmd_decisions(args):
+    """Inspectable adaptive decisions (§56-§58): why was X chosen?"""
+    qs = _qs(args)
+    rows = qs.decisions(args.project_id, kind=args.kind or "")
+    if not rows:
+        console.print("[dim]no adaptive decisions recorded[/dim]")
+        return
+    t = Table(title="Adaptive decisions")
+    for col in ("KIND", "CHOSEN", "ALTERNATIVES", "POLICY", "EXPECTED",
+                "ACTUAL", "WHY"):
+        t.add_column(col)
+    for drow in rows:
+        t.add_row(drow["kind"], drow["chosen"],
+                  ",".join(drow["alternatives"])[:24],
+                  drow["policy_version"],
+                  str(drow["expected_gain"]) if drow["expected_gain"]
+                  is not None else "-",
+                  str(drow["actual_gain"]) if drow["actual_gain"]
+                  is not None else "-",
+                  drow["reason"][:48])
+    console.print(t)
+
+
+def cmd_alerts(args):
+    """Ranked research alerts (§83/§84)."""
+    qs = _qs(args)
+    if args.ack:
+        console.print({"acknowledged": qs.acknowledge_alert(args.ack)})
+        return
+    rows = sorted(qs.alerts(args.project_id, status=args.status),
+                  key=lambda x: -float(x.get("score") or 0))
+    if not rows:
+        console.print("[dim]no alerts[/dim]")
+        return
+    t = Table(title="Research alerts")
+    for col in ("SCORE", "KIND", "SEVERITY", "STATUS", "ID"):
+        t.add_column(col)
+    for al in rows:
+        t.add_row(str(al["score"]), al["kind"], al["severity"],
+                  al["status"], al["alert_id"])
+    console.print(t)
+
+
+def cmd_review(args):
+    """Run the independent critic over a project's current state (§42-§45).
+    Produces review findings only — it never modifies research."""
+    llm = None
+    if args.level == "HIGH_RIGOR" and not args.no_llm:
+        try:
+            from research_engine.core.orchestrator import Orchestrator
+            orch = Orchestrator.load(_ctx4().cfg, args.project_id)
+            llm = orch.router.reasoning
+        except Exception:
+            llm = None
+    rev = _qs(args).review(args.project_id, level=args.level, llm=llm)
+    from rich.json import JSON
+    console.print(JSON.from_data(rev))
+
+
+def cmd_outcome(args):
+    """Show stored research-outcome records (§6)."""
+    from rich.json import JSON
+    rows = _qs(args).outcomes(args.project_id, limit=args.limit)
+    if not rows:
+        console.print("[dim]no outcomes recorded[/dim]")
+        return
+    if args.outcome_id:
+        row = next((r for r in rows if r["outcome_id"] == args.outcome_id),
+                   None)
+        if row is None:
+            console.print("[red]unknown outcome id[/red]")
+            raise SystemExit(1)
+        console.print(JSON.from_data(row))
+        return
+    t = Table(title="Research outcomes")
+    for col in ("OUTCOME", "TYPE", "FINGERPRINT", "GAIN v2", "NEXT ACTION",
+                "WHEN"):
+        t.add_column(col)
+    for r in rows:
+        dd = r["data"]
+        t.add_row(r["outcome_id"], r["research_type"],
+                  r["fingerprint"][:10],
+                  str(dd.get("research_gain", {}).get("research_gain_v2")),
+                  dd.get("final_decision", {}).get("next_action", "-"),
+                  r["created_at"][:19])
+    console.print(t)
+
+
+def cmd_cross_domain(args):
+    """Read-only cross-domain synthesis view (§70)."""
+    from research_engine.core.orchestrator import Orchestrator
+    from research_engine.specialists.synthesis import synthesize
+    orch = Orchestrator.load(_ctx4().cfg, args.project_id)
+    console.print_json(json.dumps(synthesize(orch), default=str))
+
+
 def cmd_job(args):
     ctx = _ctx4()
     j = ctx.platform_db.get_job(args.job_id)
@@ -947,7 +1233,12 @@ def cmd_job_control(args):
     elif action == "cancel":
         ok = sched.cancel_job(ident)
     elif action == "retry":
-        t = ctx.platform_db.requeue_task(ident)
+        from research_engine.storage.platform_db import TaskNotRetryable
+        try:
+            t = ctx.platform_db.requeue_task(ident)
+        except TaskNotRetryable as exc:
+            console.print(f"retry: REFUSED ({exc})")
+            return
         ok = t is not None
         if ok:
             ctx.start_scheduler()
@@ -1265,6 +1556,75 @@ def main(argv=None):
     p.add_argument("action", choices=["pause", "resume", "cancel", "retry"])
     p.add_argument("id")
     p.set_defaults(fn=cmd_job_control)
+
+    # --- Phase 5: specialists ---
+    sp = sub.add_parser("specialists", help="specialist registry visibility")
+    sp.add_argument("sid", nargs="?", default=None,
+                    help="inspect one specialist (capabilities)")
+    sp.set_defaults(fn=cmd_specialists)
+
+    rsp = sub.add_parser("research-specialists",
+                         help="specialist invocations for a project")
+    rsp.add_argument("project_id")
+    rsp.set_defaults(fn=cmd_research_specialists)
+
+    xdom = sub.add_parser("cross-domain",
+                          help="read-only cross-domain synthesis view")
+    xdom.add_argument("project_id")
+    xdom.set_defaults(fn=cmd_cross_domain)
+
+    # --- Phase 6: process intelligence ---
+    p = sub.add_parser("quality", help="research-process quality dashboard (§86)")
+    p.add_argument("project_id", nargs="?", default="")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(fn=cmd_quality)
+
+    p = sub.add_parser("policy", help="versioned policy registry control (§52)")
+    p.add_argument("action",
+                   choices=["list", "show", "propose", "evaluate", "activate",
+                            "rollback", "deactivate", "compare"])
+    p.add_argument("kind", nargs="?", default="")
+    p.add_argument("version", nargs="?", default="")
+    p.add_argument("--body", default="{}", help="JSON body for propose")
+    p.add_argument("--evaluation", default="", help="JSON evaluation record")
+    p.add_argument("--reason", default="")
+    p.add_argument("--version-a", dest="version_a", default="")
+    p.add_argument("--version-b", dest="version_b", default="")
+    p.set_defaults(fn=cmd_policy)
+
+    p = sub.add_parser("feedback", help="submit/list user feedback (§85)")
+    p.add_argument("project_id")
+    p.add_argument("--verdict", default="",
+                   help="correct|incorrect|useful|irrelevant|missing_context|"
+                        "bad_source|bad_reasoning")
+    p.add_argument("--target-kind", dest="target_kind", default="report")
+    p.add_argument("--target-id", dest="target_id", default="")
+    p.add_argument("--note", default="")
+    p.set_defaults(fn=cmd_feedback)
+
+    p = sub.add_parser("decisions", help="inspectable adaptive decisions (§56)")
+    p.add_argument("project_id")
+    p.add_argument("--kind", default="")
+    p.set_defaults(fn=cmd_decisions)
+
+    p = sub.add_parser("alerts", help="ranked research alerts (§83)")
+    p.add_argument("project_id")
+    p.add_argument("--status", default="open")
+    p.add_argument("--ack", default="", help="alert id to acknowledge")
+    p.set_defaults(fn=cmd_alerts)
+
+    p = sub.add_parser("review", help="independent critic review (§42)")
+    p.add_argument("project_id")
+    p.add_argument("--level", default="STANDARD",
+                   choices=["STANDARD", "DEEP", "HIGH_RIGOR"])
+    p.add_argument("--no-llm", dest="no_llm", action="store_true")
+    p.set_defaults(fn=cmd_review)
+
+    p = sub.add_parser("outcome", help="stored research outcomes (§6)")
+    p.add_argument("project_id")
+    p.add_argument("--limit", type=int, default=10)
+    p.add_argument("--outcome-id", dest="outcome_id", default="")
+    p.set_defaults(fn=cmd_outcome)
 
     p = sub.add_parser("serve", help="run the REST API server")
     p.add_argument("--host", default=None)

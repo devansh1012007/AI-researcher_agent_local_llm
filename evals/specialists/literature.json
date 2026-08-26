@@ -1,0 +1,12 @@
+{
+  "mode": "specialist_chain",
+  "question": "Map soft gripper literature and surface methodological gaps.",
+  "stages": [["literature", "LITERATURE_REVIEW"]],
+  "seed_corpus": [
+    ["The soft method outperforms rigid baselines on delicate items.",
+     "outperforms rigid baselines on delicate items"],
+    ["No public benchmark exists for produce-handling tasks.",
+     "no public benchmark for produce-handling"]
+  ],
+  "thresholds": {"gaps": 1, "claims": 1}
+}

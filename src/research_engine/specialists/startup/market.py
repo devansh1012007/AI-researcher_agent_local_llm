@@ -45,10 +45,16 @@ def slugify(name: str) -> str:
 
 
 class MarketAnalyzer:
-    def __init__(self, repos: Repositories, provider=None, srepos=None):
+    def __init__(self, repos: Repositories, provider=None, srepos=None,
+                 persist: bool = True):
         self.repos = repos
         self.provider = provider  # optional LLM (router.reasoning)
         self.srepos = srepos      # optional StartupRepos for domain persistence
+        # Decision: persistence into CORE tables (gaps, contradictions) is
+        # gated by an explicit flag, not by srepos-ness.
+        # Why: repos-only construction (tests, focused modes) must keep
+        # writing core artifacts; only report-path read-only mode disables.
+        self.persist = persist
 
     # ------------------------------------------------------------- definition
     def build_market(self, project_id: str, question: str) -> Market:
@@ -76,7 +82,7 @@ class MarketAnalyzer:
                       iteration_found=0)
             gap.ensure_id()
             existing = {g.description[:60] for g in self.repos.gaps.all(project_id)}
-            if gap.description[:60] not in existing:
+            if gap.description[:60] not in existing and self.persist:
                 self.repos.gaps.save(gap)
         mkt.ensure_id()
         return mkt
@@ -265,7 +271,7 @@ class MarketAnalyzer:
                 con.ensure_id()
                 known = {c.explanation[:80] for c in
                          self.repos.contradictions.all(project_id)}
-                if con_text[:80] not in known:
+                if con_text[:80] not in known and self.persist:
                     self.repos.contradictions.save(con)
                 for g in group:
                     g.conflict_flag = "MARKET_SIZE_CONFLICT"

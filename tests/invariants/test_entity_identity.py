@@ -138,3 +138,42 @@ class TestBug02Idempotency:
         n2 = kb.seed_project(pid, "x-market", srepos)
         n3 = kb.seed_project(pid, "x-market", srepos)
         assert n1 >= 1 and n2 == 0 and n3 == 0
+
+
+class TestConcurrentCreation:
+    """Gate review §11: the UNIQUE-index backstop (INV-003) must hold under
+    concurrent writers, not merely sequential re-runs. Application-side
+    checks alone were proven insufficient (BUG-02); this pins the DB layer."""
+
+    def test_parallel_save_natural_yields_single_canonical_row(
+            self, seeded_project):
+        import threading
+
+        orch, cfg, tmp, pid = seeded_project
+        from research_engine.specialists.startup.models import CompetitorProfile
+        from research_engine.specialists.startup.repos import get_startup_repos
+        repos = get_startup_repos(orch)
+        errors: list[Exception] = []
+
+        def worker(i: int) -> None:
+            try:
+                cp = CompetitorProfile(project_id=pid, name=f"zoho books",
+                                       product="accounting software",
+                                       positioning=f"smb suite v{i}")
+                cp.ensure_id()
+                repos.competitor_profiles.save_natural(cp)
+            except Exception as e:  # surfaced by the assertion below
+                errors.append(e)
+
+        threads = [threading.Thread(target=worker, args=(i,))
+                   for i in range(8)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert not errors, f"concurrent save_natural raised: {errors}"
+        rows = repos.competitor_profiles.all(pid)
+        names = [(r.name or "").lower() for r in rows]
+        assert names.count("zoho books") == 1, (
+            f"concurrent writers produced duplicate identities: {names}")

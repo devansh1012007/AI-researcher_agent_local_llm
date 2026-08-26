@@ -103,14 +103,22 @@ class WatchRunner:
         diff = detector.diff(watcher.project_id, hits)
 
         extracted = 0
+        new_evidence_ids: list[str] = []
         interesting = diff["new"] + diff["changed"]
         if interesting and watcher.action == "incremental_update":
+            ev_before = {e.id for e in orch.repos.evidence.all(orch.project.id)}
             extracted = self._extract_incremental(orch, interesting)
+            if extracted:
+                new_evidence_ids = [e.id for e in
+                                    orch.repos.evidence.all(orch.project.id)
+                                    if e.id not in ev_before]
 
-        # notifications (spec #21/#133)
+        # notifications (spec #21/#133). New sources and changed sources are
+        # DIFFERENT events; the old code published EvidenceCreated for both
+        # via a dead `if False` conditional.
         for item in diff["new"]:
             self.bus.publish(DomainEvent(
-                "SourceUpdated" if False else "EvidenceCreated",
+                "EvidenceCreated",
                 project_id=watcher.project_id,
                 payload={"kind": "new_source", "url": item["url"],
                          "title": item.get("title", "")[:120]}))
@@ -133,6 +141,20 @@ class WatchRunner:
                    "changed": len(diff["changed"]), "unchanged":
                    len(diff["unchanged"]), "extracted_evidence": extracted,
                    "empty_streak": w.consecutive_empty_runs}
+        # ---- Phase 6 §80-§83: watcher → impact analysis → ranked alerts.
+        # Targeted re-research is submitted only when the new evidence is
+        # CONNECTED to claims/hypotheses/opportunities (impact traversal),
+        # keeping noise bounded. Failures here never break the tick.
+        if new_evidence_ids:
+            try:
+                from research_engine.adaptive.impact import (
+                    analyze_new_evidence, raise_impact_alerts)
+                raise_impact_alerts(self.ctx.platform_db, orch,
+                                    w.project_id, new_evidence_ids,
+                                    source=f"watcher:{w.id}")
+                summary["alerts"] = True
+            except Exception:
+                pass
         if interesting or extracted:
             self.bus.publish(DomainEvent(
                 "WatcherTriggered", project_id=w.project_id,

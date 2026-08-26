@@ -36,12 +36,16 @@ class ModelRouter:
     def __init__(self, app_cfg: AppConfig):
         self.app_cfg = app_cfg
         self._cache: dict[str, LLMProvider] = {}
-        self.total_calls = 0
 
     def for_role(self, role: str) -> LLMProvider:
         if role not in self._cache:
             role_cfg: LLMRoleConfig = getattr(self.app_cfg.models, role)
-            self._cache[role] = build_provider(role_cfg)
+            inner = build_provider(role_cfg)
+            # Phase 6 §24: single telemetry choke point — every production
+            # LLM call is observed (provider/model/role/latency/schema).
+            from research_engine.providers.llm.telemetry import (
+                wrap_for_telemetry)
+            self._cache[role] = wrap_for_telemetry(inner, role, role_cfg)
             log.info("router: role=%s -> %s/%s", role, role_cfg.provider, role_cfg.model)
         return self._cache[role]
 

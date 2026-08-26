@@ -69,12 +69,15 @@ class StartupResearchService:
             self._kb = MarketKnowledgeBase(self.data_dir)
         return self._kb
 
-    def _analyzers(self, repos, srepos, rrepos, graph, provider):
+    def _analyzers(self, repos, srepos, rrepos, graph, provider,
+                   persist: bool = True):
         """When srepos is None every analyzer runs READ-ONLY (INVARIANT-004):
-        analysis computes; persistence happens only through a live bundle."""
+        analysis computes; persistence happens only through a live bundle.
+        `persist` gates CORE-table writes explicitly (market gaps/conflicts);
+        domain-table writes stay keyed on the live srepos bundle."""
         from research_engine.specialists.startup.validation import ValidationPlanner
         return {
-            "market": MarketAnalyzer(repos, provider, srepos),
+            "market": MarketAnalyzer(repos, provider, srepos, persist=persist),
             "customers": CustomerAnalyzer(repos, provider, srepos),
             "competitors": CompetitorAnalyzer(repos, graph, provider, srepos),
             "signals": SignalAnalyzer(repos, graph, provider, srepos),
@@ -95,10 +98,10 @@ class StartupResearchService:
         orch = self._orch(project_id)
         repos, live_srepos, rrepos, graph = self._repos_for(orch)
         provider = orch.router.reasoning if hasattr(orch, "router") else None
+        # GATE F-01 REPAIR (INVARIANT-004): srepos=None is the read-only
+        # convention every analyzer already honors; the duplicated block that
+        # used to clobber this gate was removed. See test_gate_findings F-01.
         srepos = live_srepos if persist else None
-        orch = self._orch(project_id)
-        repos, srepos, rrepos, graph = self._repos_for(orch)
-        provider = orch.router.reasoning if hasattr(orch, "router") else None
 
         del live_srepos  # naming clarity: only `srepos` is used below
         # cross-project reuse first (spec #93): seed remembered knowledge
@@ -108,12 +111,14 @@ class StartupResearchService:
             slug = prior[0].market_slug if prior else project_id
             kb_seeded = self.kb.seed_project(project_id, slug, srepos)
 
-        base_signals_extractor = StartupIntelligence(repos, graph)
+        base_signals_extractor = StartupIntelligence(repos, graph,
+                                                     persist=persist)
         raw_stats = base_signals_extractor.extract_all(project_id)
         raw_signals = base_signals_extractor.load_startup_entities(
             project_id, "market_signal")
 
-        a = self._analyzers(repos, srepos, rrepos, graph, provider)
+        a = self._analyzers(repos, srepos, rrepos, graph, provider,
+                            persist=(srepos is not None))
 
         question = ""
         proj = orch.repos.projects.get(project_id)
@@ -121,12 +126,15 @@ class StartupResearchService:
             question = getattr(proj, "question_raw", "") or ""
 
         market = None
-        markets = srepos.markets.all(project_id)
+        markets = srepos.markets.all(project_id) if srepos is not None else []
         if markets:
             market = markets[0]
         else:
+            # compute in memory even when read-only — reports need the
+            # context; only the PERSISTENCE is gated (GATE F-01 repair)
             market = a["market"].build_market(project_id, question or project_id)
-            market = srepos.markets.save_natural(market)
+            if srepos is not None:
+                market = srepos.markets.save_natural(market)
 
         sizes = a["market"].collect_sizes(project_id, market)
         size_report = a["market"].cross_validate_sizes(project_id, market, sizes)

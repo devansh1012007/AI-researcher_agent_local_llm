@@ -1,0 +1,12 @@
+{
+  "mode": "specialist_chain",
+  "question": "Feasibility of low-cost agricultural grippers: constraints and risks.",
+  "stages": [["technology", "FEASIBILITY"]],
+  "seed_corpus": [
+    ["Deployment requires a GPU with 24GB VRAM minimum.",
+     "requires a GPU with 24GB VRAM"],
+    ["Integration with existing harvesters is undocumented.",
+     "integration with existing harvesters is undocumented"]
+  ],
+  "thresholds": {"gaps": 3}
+}

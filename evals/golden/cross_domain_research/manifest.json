@@ -1,0 +1,12 @@
+{
+  "mode": "specialist_chain",
+  "question": "Which research developments in grippers could address customer pain in produce handling?",
+  "stages": [["literature", "LITERATURE_REVIEW"],
+             ["technology", "FEASIBILITY"]],
+  "seed_corpus": [
+    ["The gripper prototype achieves 98% pick accuracy on the benchmark.",
+     "prototype achieves 98% accuracy on benchmark"],
+    ["Growers complain manual sorting is slow and damages produce.",
+     "complain manual sorting is slow"]
+  ]
+}

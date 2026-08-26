@@ -210,6 +210,84 @@ def build_tools() -> list[dict[str, Any]]:
           "Side-by-side comparison matrix + tradeoffs",
           Permission.READ,
           {"type": "object", "properties": {"project_id": {"type": "string"}}}),
+
+        # ---- Phase 5 specialist ecosystem (§73) ----
+        t("list_specialists",
+          "List registered specialists with modes and health",
+          Permission.READ,
+          {"type": "object", "properties": {}}),
+        t("get_specialist_capabilities",
+          "Contract details for one specialist (modes, permissions, budgets)",
+          Permission.READ,
+          {"type": "object", "properties": {"specialist_id":
+                                             {"type": "string"}},
+           "required": ["specialist_id"]}),
+        t("start_specialist_research",
+          "Submit ONE specialist invocation as a fenced platform task",
+          Permission.RESEARCH,
+          {"type": "object",
+           "properties": {"project_id": {"type": "string"},
+                          "specialist_id": {"type": "string"},
+                          "mode": {"type": "string"}},
+           "required": ["project_id", "specialist_id"]}),
+        t("start_cross_domain_research",
+          "Submit the flagship literature→technology→startup chain",
+          Permission.RESEARCH,
+          {"type": "object", "properties": {"project_id":
+                                             {"type": "string"}},
+           "required": ["project_id"]}),
+
+        # ---- Phase 6 process intelligence (§86) ----
+        t("get_quality_dashboard",
+          "Research-process quality: specialists, models, query families, "
+          "diversity and drift",
+          Permission.READ,
+          {"type": "object", "properties": {"project_id":
+                                             {"type": "string"}}}),
+        t("list_policies",
+          "List versioned adaptive policies and their lifecycle status",
+          Permission.READ,
+          {"type": "object",
+           "properties": {"kind": {"type": "string"}}}),
+        t("activate_policy",
+          "Explicitly activate a policy version (human-controlled; bounded)",
+          Permission.RESEARCH,
+          {"type": "object",
+           "properties": {"kind": {"type": "string"},
+                          "version": {"type": "string"},
+                          "reason": {"type": "string"}},
+           "required": ["kind", "version"]}),
+        t("submit_feedback",
+          "Record explicit user feedback on a research artifact (§85)",
+          Permission.RESEARCH,
+          {"type": "object",
+           "properties": {"project_id": {"type": "string"},
+                          "verdict": {"type": "string"},
+                          "target_kind": {"type": "string"},
+                          "target_id": {"type": "string"},
+                          "note": {"type": "string"}},
+           "required": ["project_id", "verdict"]}),
+        t("list_alerts",
+          "Ranked research alerts for a project (§83/§84)",
+          Permission.READ,
+          {"type": "object", "properties": {"project_id":
+                                             {"type": "string"}},
+           "required": ["project_id"]}),
+        t("review_research",
+          "Run the independent critic; returns findings only (§42-§45)",
+          Permission.RESEARCH,
+          {"type": "object",
+           "properties": {"project_id": {"type": "string"},
+                          "level": {"type": "string",
+                                    "enum": ["STANDARD", "DEEP",
+                                             "HIGH_RIGOR"]}},
+           "required": ["project_id"]}),
+        t("list_outcomes",
+          "Stored research-outcome records with gain v2 and next actions",
+          Permission.READ,
+          {"type": "object", "properties": {"project_id":
+                                             {"type": "string"}},
+           "required": ["project_id"]}),
     ]
 
 
@@ -389,6 +467,105 @@ class McpServer:
     def _tool_get_research_report(self, a: dict) -> dict:
         text = self.reports.read_report(a["project_id"], a["name"])
         return {"name": a["name"], "chars": len(text), "content": text[:20000]}
+
+    # ---- Phase 5 specialist ecosystem handlers (§73) ----
+    def _registry(self):
+        from research_engine.specialists.bootstrap import (
+            ensure_builtin_specialists)
+        from research_engine.specialists.runtime import get_registry
+        ensure_builtin_specialists()
+        return get_registry()
+
+    def _tool_list_specialists(self, a: dict) -> dict:
+        out = []
+        for r in self._registry().list_active():
+            d = r.descriptor
+            out.append({"specialist_id": d.specialist_id,
+                        "version": d.version, "modes": d.supported_modes,
+                        "health": r.health.state.value})
+        return {"specialists": out}
+
+    def _tool_get_specialist_capabilities(self, a: dict) -> dict:
+        r = self._registry().lookup(a["specialist_id"])
+        if r is None:
+            raise NotFoundError("specialist", a["specialist_id"])
+        d = r.descriptor
+        return {"specialist_id": d.specialist_id, "version": d.version,
+                "modes": d.supported_modes, "skills": d.skills,
+                "entity_types": d.entity_types,
+                "permissions": sorted(p.value for p in d.permissions),
+                "budgets": d.budgets.model_dump(),
+                "source_preferences": d.source_preferences}
+
+    def _tool_start_specialist_research(self, a: dict) -> dict:
+        from research_engine.specialists.workflows import submit_stage
+        job_id = submit_stage(
+            self._ctx().platform_db, a["project_id"],
+            a["specialist_id"], 0,
+            mode=a.get("mode", "ANALYZE"),
+            routing_reason="mcp start_specialist_research")
+        ctx = self._ctx()
+        try:
+            ctx.start_scheduler()
+        except Exception:
+            pass
+        return {"job_id": job_id,
+                "note": "poll get_job_status for progress"}
+
+    def _tool_start_cross_domain_research(self, a: dict) -> dict:
+        from research_engine.specialists.workflows import submit_stage
+        db = self._ctx().platform_db
+        stages = [("literature", "LITERATURE_REVIEW"),
+                  ("technology", "FEASIBILITY"),
+                  ("startup", "OPPORTUNITY_DISCOVERY")]
+        jobs = [submit_stage(db, a["project_id"], sid, i, mode=mode,
+                             routing_reason="mcp cross-domain flagship")
+                for i, (sid, mode) in enumerate(stages)]
+        ctx = self._ctx()
+        try:
+            ctx.start_scheduler()
+        except Exception:
+            pass
+        return {"jobs": jobs}
+
+    # ---- Phase 6 process intelligence handlers (§86) ----
+    def _quality(self):
+        from research_engine.services.quality_service import QualityService
+        return QualityService(self._ctx())
+
+    def _tool_get_quality_dashboard(self, a: dict) -> dict:
+        return self._quality().dashboard(a.get("project_id", ""))
+
+    def _tool_list_policies(self, a: dict) -> dict:
+        return {"policies": self._quality().list_policies(a.get("kind", ""))}
+
+    def _tool_activate_policy(self, a: dict) -> dict:
+        return {"activated": self._quality().activate_policy(
+            a["kind"], a["version"], reason=a.get("reason", "mcp"))}
+
+    def _tool_submit_feedback(self, a: dict) -> dict:
+        return self._quality().submit_feedback(
+            a["project_id"], a.get("target_kind", "report"),
+            a.get("target_id", ""), a["verdict"],
+            note=a.get("note", ""))
+
+    def _tool_list_alerts(self, a: dict) -> dict:
+        return {"alerts": self._quality().alerts(a["project_id"])}
+
+    def _tool_review_research(self, a: dict) -> dict:
+        rev = self._quality().review(a["project_id"],
+                                     level=a.get("level", "STANDARD"))
+        return {"review_id": rev["review_id"],
+                "dimensions": rev["dimensions"],
+                "findings": rev["findings"][:20]}
+
+    def _tool_list_outcomes(self, a: dict) -> dict:
+        rows = self._quality().outcomes(a["project_id"])
+        return {"outcomes": [
+            {"outcome_id": r["outcome_id"], "type": r["research_type"],
+             "gain": r["data"].get("research_gain", {}),
+             "next_action": r["data"].get("final_decision", {})
+             .get("next_action")} for r in rows]}
 
     def _tool_search_research_memory(self, a: dict) -> dict:
         hits = self.research.search_memory(

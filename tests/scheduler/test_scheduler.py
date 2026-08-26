@@ -85,7 +85,10 @@ class TestTaskLifecycle:
             time.sleep(0.05)
         err_before = ts[0].error
         rq = db.requeue_task(ts[0].id)
-        assert rq.attempts == 0 and err_before   # history preserved on object
+        # GATE F-02b: the fencing token is NEVER reset on manual retry —
+        # attempts is preserved so the next claim's fence stays monotonic.
+        # History (error text) is still retained (#122).
+        assert rq.attempts == ts[0].attempts and rq.status == TaskStatus.RETRYING
         fresh = db.get_task(ts[0].id)
         assert fresh.error  # prior failure info retained (#122)
 

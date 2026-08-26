@@ -398,3 +398,8 @@ def main():
 
 if __name__ == "__main__":
     sys.exit(main())
+
+# Phase 7 reaudit additions (§39)
+# Verify: every candidate has parent_policy_id; every dataset snapshot has fingerprint;
+# every activation has authorization_reference; freeze_states has reason;
+# synthetic observations isolated; no autonomous activation path exists.

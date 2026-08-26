@@ -1,0 +1,11 @@
+{
+  "mode": "specialist_chain",
+  "question": "Assess technical feasibility of low-cost soft grippers for agriculture.",
+  "stages": [["technology", "FEASIBILITY"]],
+  "seed_corpus": [
+    ["Deployment requires a GPU with 24GB VRAM minimum.",
+     "requires a GPU with 24GB VRAM"],
+    ["Integration with existing harvesters is undocumented.",
+     "integration with existing harvesters is undocumented"]
+  ]
+}

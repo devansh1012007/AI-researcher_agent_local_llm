@@ -1,0 +1,36 @@
+{
+  "config": {
+    "kind": "specialist_chain",
+    "stages": [
+      [
+        "literature",
+        "LITERATURE_REVIEW"
+      ],
+      [
+        "technology",
+        "FEASIBILITY"
+      ],
+      [
+        "startup",
+        "OPPORTUNITY_DISCOVERY"
+      ]
+    ]
+  },
+  "duration_s": 0.16,
+  "metrics": {
+    "claims": 1,
+    "evidence_after": 4,
+    "gaps": 2,
+    "seed_evidence": 4,
+    "stage_statuses": [
+      "SUCCEEDED",
+      "SUCCEEDED",
+      "SUCCEEDED"
+    ]
+  },
+  "updated_reason": "phase5 eval baselines",
+  "versions": {
+    "git": "f9e3d8d",
+    "python": "3.12.3"
+  }
+}

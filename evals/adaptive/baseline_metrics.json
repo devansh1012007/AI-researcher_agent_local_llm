@@ -1,0 +1,30 @@
+{
+  "metrics": {
+    "budget": {
+      "all_bounded": 1,
+      "falling_tapers": 1,
+      "rising_uses_budget": 1,
+      "spend": [
+        6,
+        10,
+        10,
+        4,
+        4,
+        4
+      ]
+    },
+    "critic": {
+      "caught": 2,
+      "injected_defects": 2,
+      "recall": 1.0
+    },
+    "query_strategy": 1.0,
+    "routing": {
+      "v1_accuracy": 1.0,
+      "v1_unnecessary": 0,
+      "v2_accuracy": 1.0,
+      "v2_unnecessary": 0
+    }
+  },
+  "reason": "phase6 baselines: budget metric corrected to behavior-shape claims"
+}

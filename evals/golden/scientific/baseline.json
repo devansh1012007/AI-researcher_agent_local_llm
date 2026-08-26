@@ -1,0 +1,53 @@
+{
+  "config": {
+    "academic_n": 2,
+    "academic_providers": [
+      "openalex",
+      "crossref",
+      "arxiv"
+    ],
+    "duplicate_rate_converged": 0.7,
+    "hits_per_query": 3,
+    "max_iterations": 1,
+    "new_evidence_threshold": 0.1,
+    "web_provider": "duckduckgo"
+  },
+  "duration_s": 3.3,
+  "metrics": {
+    "claims": 11,
+    "contradictions": 0,
+    "evidence_rejected": 0,
+    "evidence_supported": 0,
+    "evidence_total": 152,
+    "gaps": 5,
+    "hypotheses": 6,
+    "report_files": [
+      "assumptions.md",
+      "benchmark_analysis.md",
+      "contradiction_report.md",
+      "decision_analysis.md",
+      "evaluation_plan.md",
+      "evidence_map.md",
+      "experiment_plan.md",
+      "gaps.md",
+      "hypotheses.md",
+      "info.md",
+      "literature_map.md",
+      "literature_review.md",
+      "methodology.md",
+      "methods_comparison.md",
+      "problem.md",
+      "research_log.md",
+      "research_plan.md",
+      "research_timeline.md",
+      "sources.md"
+    ],
+    "sources": 19,
+    "stop_reason": ""
+  },
+  "updated_reason": "canonical score-shape validator + F-07 soft linkage telemetry (gate review)",
+  "versions": {
+    "git": "f9e3d8d",
+    "python": "3.12.3"
+  }
+}

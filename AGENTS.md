@@ -50,7 +50,12 @@ pytest                                            # full suite, fully OFFLINE
 pytest tests/invariants -q                        # executable system invariants
 pytest tests/<area> -k <pattern>                  # targeted
 python evals/runners/run_eval.py --offline        # quality gates (all datasets)
-python scripts/mutation_check.py                  # known-critical mutations MUST be detected
+python evals/runners/run_golden.py                # golden regression baselines (§docs/golden_research_runs.md)
+                                                  #   + evals/specialists/*.json + evals/cross_domain/*.json
+python scripts/mutation_check.py                  # known-critical mutations MUST be detected (M-1..M-13)
+python evals/runners/run_adaptive_benchmark.py    # Phase 6: baseline vs adaptive policy comparison (offline)
+research quality [pid]                            # process-quality dashboard (specialists/models/families/drift)
+research policy activate|rollback <kind> <ver>    # INV-016: the ONLY deployment paths for learned policy
 python scripts/reaudit.py                         # replays every original audit reproduction
 research repair-startup <pid>|--all               # dedupe startup entities (INV-003)
 research doctor                                   # health checks

@@ -175,3 +175,32 @@ class TestHypothesisWeighting:
 
         assert results["swarm"]["support"] < results["strong"]["support"], \
             "tier-5 swarm must never outvote tier-1 primary"
+
+
+class TestSpecMatrixCells:
+    """Gate review §14 matrix cells not previously pinned.
+
+    Policy floor: an adversarial transformation may downgrade to
+    WEAKLY_SUPPORTS/CONTRADICTS but must NEVER keep verdict SUPPORTS."""
+
+    def test_time_scope_shift_cannot_support(self):
+        r = verify_claim_support(
+            "Revenue grew 40% year over year in 2024.",
+            "The company grew revenue 40% year over year in fiscal 2022.")
+        assert r.verdict != "SUPPORTS", r.reasons
+
+    def test_exception_stripping_cannot_support(self):
+        r = verify_claim_support(
+            "All paid plans include SSO.",
+            "All paid plans include SSO, except the Starter tier where "
+            "SSO is a paid add-on.")
+        assert r.verdict != "SUPPORTS", r.reasons
+
+    def test_at_least_quantifier_cannot_tighten(self):
+        r = verify_claim_support(
+            "The trial enrolled exactly 500 patients.",
+            "The trial enrolled at least 500 patients across sites.")
+        assert r.verdict != "SUPPORTS", r.reasons
+    # NOTE: metric-direction flip ("decreased" vs "increased") was probed
+    # during the gate review and is NOT caught by the current lexicon —
+    # documented as GATE F-06 in tests/invariants/test_gate_findings.py.

@@ -217,6 +217,30 @@ class PersistentScheduler:
                                   daemon=True)
             th.start()
             self._threads.append(th)
+        # Phase 6 §80: watchers become continuous — due ticks are enqueued
+        # at start and after every finished task (event-driven, bounded),
+        # replacing the previously unwired schedule_due path.
+        try:
+            self._schedule_due_watchers()
+        except Exception as exc:
+            self.log.error("watcher_seed_error", error=str(exc))
+
+    def _schedule_due_watchers(self, max_enqueue: int = 3) -> int:
+        """Enqueue WATCHER_TICK jobs for due watchers. Bounded per sweep;
+        the tick's own backoff (consecutive_empty_runs) prevents storms."""
+        from research_engine.models.job import JobTask, ResearchJob
+        n = 0
+        for w in self.db.due_watchers()[:max_enqueue]:
+            job = ResearchJob(project_id=w.project_id, type="watcher_tick",
+                              priority=90)
+            task = JobTask(job_id=job.id, project_id=w.project_id,
+                           type="WATCHER_TICK",
+                           resource_profile="NETWORK_LIGHT", priority=90,
+                           payload={"watcher_id": w.id,
+                                    "project_id": w.project_id})
+            self.submit_job(job, [task])
+            n += 1
+        return n
 
     def stop(self, drain_s: float = 5.0) -> None:
         self._stop.set()
@@ -409,6 +433,10 @@ class PersistentScheduler:
                     self._advance_one(task.job_id)
                 except Exception as exc:
                     self.log.error("advance_after_finish_error", error=str(exc))
+                try:
+                    self._schedule_due_watchers()
+                except Exception:
+                    pass
 
     def _advance_one(self, job_id: str) -> None:
         job = self.db.get_job(job_id)

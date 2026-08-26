@@ -1,0 +1,17 @@
+{
+  "mode": "specialist_chain",
+  "question": "Find a promising startup opportunity that emerges from a meaningful technical research gap in soft robotics.",
+  "stages": [["literature", "LITERATURE_REVIEW"],
+             ["technology", "FEASIBILITY"],
+             ["startup", "OPPORTUNITY_DISCOVERY"]],
+  "seed_corpus": [
+    ["The gripper prototype achieves 98% pick accuracy on the benchmark.",
+     "prototype achieves 98% accuracy on benchmark"],
+    ["No low-cost deployment path exists for small farms yet.",
+     "no low-cost deployment path exists"],
+    ["Growers complain manual sorting eats their weekends.",
+     "complain manual sorting eats weekends"],
+    ["Produce handlers already pay for gentle-handling equipment.",
+     "already pay for gentle-handling equipment"]
+  ]
+}

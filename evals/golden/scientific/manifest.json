@@ -1,0 +1,17 @@
+{
+  "id": "golden_scientific_core",
+  "mode": "academic",
+  "question": "Does intermittent fasting improve metabolic health markers compared to continuous calorie restriction, and what mechanisms are proposed?",
+  "expected_invariants": [
+    "all_claims_traceable",
+    "no_ungrounded_synthesis_evidence",
+    "report_generation_read_only"
+  ],
+  "quality_thresholds": {
+    "min_sources": 3,
+    "min_evidence_supported": 4,
+    "min_claims": 2,
+    "min_gaps": 1
+  },
+  "notes": "Controlled offline corpus (FakeSearchProvider hits_per_query=3, FakeAcademicProvider n=2, ScriptedLLM extraction). Competing-evidence shape comes from query-hashed fixture pages; thresholds validated against recorded baseline."
+}

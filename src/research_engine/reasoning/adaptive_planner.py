@@ -61,9 +61,29 @@ class WhatNextOutput(BaseModel):
     priority_tasks: list[_TaskOut] = []
 
 
+# Strategy family -> learning-family names used by the Phase 6 query
+# utility registry (adaptive/outcomes.QUERY_FAMILY_BY_KIND aggregates the
+# persisted SearchQuery.kind stats).
+_STRATEGY_FAMILY = {
+    ResearchStrategy.CONTRADICTION_SEARCH: "counterevidence",
+    ResearchStrategy.FAILURE_CASE_SEARCH: "counterevidence",
+    ResearchStrategy.PRIMARY_SOURCE_SEARCH: "primary_source_search",
+    ResearchStrategy.RECENT_WORK_SEARCH: "recent_research",
+    ResearchStrategy.BROAD_SWEEP: "broad_discovery",
+    ResearchStrategy.FOCUSED_DEEP_DIVE: "technical_terminology",
+}
+
+
 def select_strategy(repos: Repositories, project_id: str,
-                    coverage: dict, iteration: int) -> tuple[str, str]:
-    """Deterministic strategy choice from current state."""
+                    coverage: dict, iteration: int,
+                    family_utility: dict[str, float] | None = None
+                    ) -> tuple[str, str]:
+    """Deterministic strategy choice from current state.
+
+    `family_utility` (optional) is historical per-family utility from the
+    Phase 6 query-strategy registry. It may ONLY break ties in the low-
+    stakes 'coverage adequate' branch (spec §19 — learn on top of the
+    deterministic rules; safety-relevant branches above are untouched)."""
     unresolved_con = repos.contradictions.count(project_id, "resolved=0")
     weak_claims = [c for c in repos.claims.all(project_id)
                    if c.supported_by and all(
@@ -84,7 +104,20 @@ def select_strategy(repos: Repositories, project_id: str,
         best = max(weakly, key=lambda c: c["importance"])
         return (ResearchStrategy.FOCUSED_DEEP_DIVE,
                 f"deep-dive '{best['question'][:60]}' (coverage {best['coverage']:.2f})")
-    # everything decently covered -> probe for negative evidence / recency
+    # everything decently covered -> probe for negative evidence / recency.
+    # Historical utility breaks the parity tie when enough samples exist;
+    # otherwise the deterministic alternation stands.
+    if family_utility:
+        u_contra = family_utility.get("counterevidence", 0.0)
+        u_recent = family_utility.get("recent_research", 0.0)
+        if abs(u_contra - u_recent) >= 1e-9:
+            if u_contra > u_recent:
+                return (ResearchStrategy.FAILURE_CASE_SEARCH,
+                        "coverage adequate; history favors counterevidence "
+                        f"probes (utility {u_contra:.2f} vs {u_recent:.2f})")
+            return (ResearchStrategy.RECENT_WORK_SEARCH,
+                    "coverage adequate; history favors recency checks "
+                    f"(utility {u_recent:.2f} vs {u_contra:.2f})")
     if iteration % 2 == 0:
         return (ResearchStrategy.FAILURE_CASE_SEARCH,
                 "coverage adequate; probing failure cases and counter-evidence")
@@ -99,11 +132,18 @@ class _FakeEv:
 class AdaptivePlanner(QueryPlannerWorker):
     """Extends the Phase 1 QueryPlannerWorker with state-driven adaptation."""
 
+    def __init__(self, provider, repos: Repositories,
+                 family_utility: dict[str, float] | None = None):
+        super().__init__(provider, repos)
+        self._family_utility = family_utility
+
     def plan_next(self, project_id: str, problem, plan, iteration: int,
                   budget_queries: int) -> NextStep:
         branches = [b for b in plan.branches]
         coverage = BranchCoverageModel(self.repos).compute(project_id, branches)
-        strategy, why = select_strategy(self.repos, project_id, coverage, iteration)
+        strategy, why = select_strategy(self.repos, project_id, coverage,
+                                        iteration,
+                                        family_utility=self._family_utility)
         priorities = rank_priorities(self.repos, project_id, branches)
         explanations = [p.explain() for p in priorities[:5]]
 
