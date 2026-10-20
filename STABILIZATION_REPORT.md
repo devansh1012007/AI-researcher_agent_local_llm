@@ -150,8 +150,9 @@ touch a scorer/gate/state machine.
    alternative persistence engines, richer scoring dimensions — until the
    suspected issues above are resolved and the debt list shrinks.
 
-Reproduce everything:
-    pytest tests/                       # 283 passed
-    python scripts/mutation_check.py    # 6/6 DETECTED
+Reproduce everything (counts are current; the narrative above is from that
+phase — see AGENTS.md for the live numbers):
+    pytest tests/                       # 292 passed, 1 skipped
+    python scripts/mutation_check.py    # 9/9 DETECTED
     python scripts/reaudit.py           # 14/14 FIXED
     evals/runners/run_eval.py --offline # 17/17 PASS
