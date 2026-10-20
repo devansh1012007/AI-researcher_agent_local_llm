@@ -6,7 +6,7 @@ import logging
 import httpx
 
 from research_engine.providers.academic.base import AcademicProvider, clean_query
-from research_engine.providers.search.base import RawSearchHit
+from research_engine.providers.search.base import RawSearchHit, SearchProviderError
 
 log = logging.getLogger(__name__)
 
@@ -28,7 +28,7 @@ class SemanticScholarProvider(AcademicProvider):
             }, headers=self.headers, timeout=self.timeout)
             if resp.status_code == 429:
                 log.warning("semantic scholar rate limited")
-                return []
+                raise SearchProviderError("semantic scholar: rate limited (429)")
             resp.raise_for_status()
             out = []
             for w in resp.json().get("data", []):
@@ -49,4 +49,4 @@ class SemanticScholarProvider(AcademicProvider):
             return out
         except httpx.HTTPError as exc:
             log.warning("semantic scholar search failed: %s", exc)
-            return []
+            raise SearchProviderError(f"semantic scholar: {exc}") from exc

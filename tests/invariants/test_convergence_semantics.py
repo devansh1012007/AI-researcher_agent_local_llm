@@ -34,16 +34,45 @@ def _budget(exhausted: bool = False):
 
 class TestFailureVsConvergence:
     def test_provider_outage_is_not_convergence(self):
-        """Queries ran and fetches FAILED: PROVIDER_DEGRADED, never CONVERGED."""
+        """Retrieval was attempted and FAILED: PROVIDER_DEGRADED, never CONVERGED."""
         a = ConvergenceAnalyzer(_cfg(), provider=None)
         d = a.evaluate(_project(), _budget(), {
             "total_evidence": 12, "new_evidence": 0,
-            "fetch_successes": 0, "fetch_failures": 5,
-            "queries_executed": 6,
+            "retrieval_failures": 5,
             "duplicate_rate": 0.0, "rejection_rate": 0.0,
             "high_importance_gaps": 2, "new_claims": 0, "domains": 3,
         })
         assert d.stop_reason == StopReason.PROVIDER_DEGRADED
+
+    def test_search_outage_is_not_convergence(self):
+        """A SEARCH outage is the case the old guard could not see.
+
+        The old test was `fetch_failures > 0 and queries_executed > 0`.
+        It could not fire in production: a fetch failure marks the SOURCE
+        row, so `documents_failed` is always 0, and the plan-time queries
+        are executed in the NEXT iteration, so `queries_executed` was 0 when
+        it was read. A search outage therefore fell through to CONVERGED.
+        """
+        a = ConvergenceAnalyzer(_cfg(), provider=None)
+        d = a.evaluate(_project(), _budget(), {
+            "total_evidence": 12, "new_evidence": 0,
+            "retrieval_failures": 8,
+            "duplicate_rate": 0.0, "rejection_rate": 0.0,
+            "high_importance_gaps": 2, "new_claims": 0, "domains": 3,
+        })
+        assert d.stop_reason == StopReason.PROVIDER_DEGRADED
+        assert d.stop_reason != StopReason.CONVERGED
+
+    def test_failures_with_progress_are_not_degradation(self):
+        """Some retrievals failed but evidence WAS produced: not degraded."""
+        a = ConvergenceAnalyzer(_cfg(), provider=None)
+        d = a.evaluate(_project(), _budget(), {
+            "total_evidence": 12, "new_evidence": 4,
+            "retrieval_failures": 3,
+            "duplicate_rate": 0.0, "rejection_rate": 0.0,
+            "high_importance_gaps": 2, "new_claims": 1, "domains": 3,
+        })
+        assert d.stop_reason != StopReason.PROVIDER_DEGRADED
 
     def test_cached_silence_is_not_degradation(self):
         """Queries ran, fetches succeeded (dupes skipped), nothing new:
@@ -52,8 +81,7 @@ class TestFailureVsConvergence:
         a = ConvergenceAnalyzer(_cfg(), provider=None)
         d = a.evaluate(_project(), _budget(), {
             "total_evidence": 12, "new_evidence": 0,
-            "fetch_successes": 4, "fetch_failures": 0,
-            "queries_executed": 6,
+            "retrieval_failures": 0,
             "duplicate_rate": 0.02, "rejection_rate": 0.0,
             "high_importance_gaps": 2, "new_claims": 1, "domains": 3,
         })
@@ -65,7 +93,7 @@ class TestFailureVsConvergence:
         a = ConvergenceAnalyzer(_cfg(dup_conv=0.7), provider=None)
         d = a.evaluate(_project(), _budget(), {
             "total_evidence": 30, "new_evidence": 1,
-            "fetch_successes": 8, "queries_executed": 5,
+            "retrieval_failures": 0,
             "duplicate_rate": 0.05, "rejection_rate": 0.75,
             "high_importance_gaps": 1, "new_claims": 0, "domains": 4,
         })
@@ -78,7 +106,7 @@ class TestFailureVsConvergence:
         a = ConvergenceAnalyzer(_cfg(dup_conv=0.7), provider=None)
         d = a.evaluate(_project(), _budget(), {
             "total_evidence": 20, "new_evidence": 0,
-            "fetch_successes": 6, "queries_executed": 4,
+            "retrieval_failures": 0,
             "duplicate_rate": 0.85, "rejection_rate": 0.02,
             "high_importance_gaps": 0, "new_claims": 0, "domains": 2,
         })
@@ -88,7 +116,7 @@ class TestFailureVsConvergence:
         a = ConvergenceAnalyzer(_cfg(), provider=None)
         d = a.evaluate(_project(), _budget(), {
             "total_evidence": 15, "new_evidence": 6,
-            "fetch_successes": 5, "queries_executed": 4,
+            "retrieval_failures": 0,
             "duplicate_rate": 0.05, "rejection_rate": 0.03,
             "high_importance_gaps": 2, "new_claims": 3, "domains": 5,
         })
@@ -98,8 +126,8 @@ class TestFailureVsConvergence:
         b = _budget(exhausted=True)
         a = ConvergenceAnalyzer(_cfg(), provider=None)
         d = a.evaluate(_project(), b, {
-            "total_evidence": 12, "new_evidence": 0, "fetch_successes": 0,
-            "queries_executed": 9, "duplicate_rate": 0.0,
+            "total_evidence": 12, "new_evidence": 0, "retrieval_failures": 0,
+            "duplicate_rate": 0.0,
             "rejection_rate": 0.0, "high_importance_gaps": 1,
             "new_claims": 0, "domains": 1})
         # budget fires first and stays honest about WHY

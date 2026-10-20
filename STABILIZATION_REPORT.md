@@ -152,7 +152,7 @@ touch a scorer/gate/state machine.
 
 Reproduce everything (counts are current; the narrative above is from that
 phase — see AGENTS.md for the live numbers):
-    pytest tests/                       # 292 passed, 1 skipped
-    python scripts/mutation_check.py    # 9/9 DETECTED
+    pytest tests/                       # 308 passed, 1 skipped
+    python scripts/mutation_check.py    # 15/15 DETECTED
     python scripts/reaudit.py           # 14/14 FIXED
     evals/runners/run_eval.py --offline # 17/17 PASS

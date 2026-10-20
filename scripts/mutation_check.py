@@ -28,7 +28,7 @@ MUTATIONS = [
      "tests/invariants/test_system_invariants.py::TestOpportunitySchema"),
 
     ("M-2", "src/research_engine/reasoning/convergence.py",
-     '''        if (new_ev == 0 and fetch_failures > 0 and queries_executed > 0):''',
+     '''        if new_ev == 0 and retrieval_failures > 0:''',
      '''        if (False):''',
      "tests/invariants/test_convergence_semantics.py::TestFailureVsConvergence::test_provider_outage_is_not_convergence"),
 
@@ -85,6 +85,43 @@ MUTATIONS = [
      '''    auth = make_auth_dependency(get_ctx)''',
      '''    auth = make_auth_dependency(lambda: holder.get("ctx"))''',
      "tests/invariants/test_api_auth_boundary.py"),
+
+    # P0-04: a search-provider failure must stay distinguishable from an
+    # empty result, all the way to the convergence decision.
+    # M-10 flattens the failure back into "no results" at the worker.
+    ("M-10", "src/research_engine/pipeline/retrieval.py",
+     '''                    q.failed = True''',
+     '''                    q.failed = False''',
+     "tests/invariants/test_search_failure_semantics.py"),
+
+    # M-11: the provider wrapper swallows the failure again.
+    ("M-11", "src/research_engine/providers/search/duckduckgo.py",
+     '''            raise SearchProviderError("duckduckgo: all attempts failed")''',
+     '''            return []''',
+     "tests/invariants/test_search_failure_semantics.py::TestProviderContract"),
+
+    # M-12..M-15: the same contract, per academic provider file. The contract
+    # test is parameterised over all six providers, so each site needs its own
+    # mutation to prove it is guarded.
+    ("M-12", "src/research_engine/providers/academic/openalex.py",
+     '''            raise SearchProviderError(f"openalex: {exc}") from exc''',
+     '''            return []''',
+     "tests/invariants/test_search_failure_semantics.py::TestProviderContract"),
+
+    ("M-13", "src/research_engine/providers/academic/arxiv.py",
+     '''            raise SearchProviderError(f"arxiv: {exc}") from exc''',
+     '''            return []''',
+     "tests/invariants/test_search_failure_semantics.py::TestProviderContract"),
+
+    ("M-14", "src/research_engine/providers/academic/crossref.py",
+     '''            raise SearchProviderError(f"crossref: {exc}") from exc''',
+     '''            return []''',
+     "tests/invariants/test_search_failure_semantics.py::TestProviderContract"),
+
+    ("M-15", "src/research_engine/providers/academic/semantic_scholar.py",
+     '''                raise SearchProviderError("semantic scholar: rate limited (429)")''',
+     '''                return []''',
+     "tests/invariants/test_search_failure_semantics.py::TestProviderContract"),
 ]
 
 

@@ -54,6 +54,8 @@ class SearchQuery(Entity):
     results_count: int = 0
     useful_results: int = 0           # results that produced accepted evidence
     iteration: int = 0
+    failed: bool = False               # the provider FAILED (not: it found nothing)
+    failure_reason: str = ""          # why it failed, for the audit trail
 
     def ensure_id(self) -> None:
         super().ensure_id(self.PREFIX)

@@ -38,12 +38,22 @@ class RetrievalWorker:
             for fut in as_completed(futures):
                 q = futures[fut]
                 try:
-                    hits = fut.result()
+                    hits, errors = fut.result()
                 except Exception as exc:  # isolation: one query failure never kills the loop
                     log.warning("query %s failed: %s", q.id, exc)
-                    hits = []
+                    hits, errors = [], [f"{type(exc).__name__}: {exc}"]
                 q.executed = True
                 q.results_count = len(hits)
+                if errors:
+                    # Decision: a failed retrieval is recorded on the query, not
+                    # flattened into an empty result.
+                    # Why: "the provider failed" and "the provider found
+                    # nothing" must be distinguishable (INV-012), otherwise a
+                    # total search outage is reported as CONVERGED research.
+                    # Constraint: `failed` is a JSON-only field (like
+                    # `results_count`); it is counted in Python, not SQL.
+                    q.failed = True
+                    q.failure_reason = "; ".join(errors)[:500]
                 for hit in hits:
                     src = self._register_result(project_id, q.id, hit)
                     if src is not None:
@@ -52,39 +62,54 @@ class RetrievalWorker:
                 self.repos.queries.save(q)
         return to_run, list(new_sources.values())
 
-    def _cached_search(self, provider_name: str, query_text: str):
+    def _cached_search(self, provider_name: str, query_text: str) -> tuple[list, str]:
+        """Return (hits, error). `error` is non-empty iff the provider FAILED.
+
+        Three cases that used to be indistinguishable, all returning []:
+        a cache hit, a provider that was never configured, and a provider
+        that failed. Only the third is a failure.
+        """
         key = cache_key(provider_name, query_text)
         cached = self.search_cache.get(key)
         if cached is not None:
             from research_engine.providers.search.base import RawSearchHit
-            return [RawSearchHit(**h) for h in cached]
+            return [RawSearchHit(**h) for h in cached], ""
         provider = self.registry.get_any(provider_name)
         if provider is None:
-            return []
+            # Not a failure: the provider was never configured (offline mode,
+            # or a route leg with no provider). Counting this as a failure
+            # would report an intentional offline run as a provider outage.
+            return [], ""
         try:
             hits = provider.search(query_text, max_results=self.cfg.search.results_per_query)
         except Exception as exc:
+            # The provider contract says raise on failure; catch broadly
+            # anyway so a third-party provider that violates it is still
+            # recorded rather than silently returning nothing.
             log.warning("provider %s failed: %s", provider_name, exc)
-            return []
+            return [], f"{provider_name}: {type(exc).__name__}: {exc}"
         self.search_cache.put(
             key, [{"url": h.url, "title": h.title, "snippet": h.snippet,
                    "published_date": h.published_date, "metadata": h.metadata} for h in hits],
             ttl_hours=self.cfg.search.cache_ttl_hours)
-        return hits
+        return hits, ""
 
-    def _execute_one(self, project_id: str, q: SearchQuery) -> list:
+    def _execute_one(self, project_id: str, q: SearchQuery) -> tuple[list, list[str]]:
         branch = next((b for b in self.repos.branches.all(project_id) if b.id == q.branch), None)
         route = route_for(branch.category if branch else "GENERIC",
                           branch.source_preferences if branch else None)
         results = []
+        errors: list[str] = []
         for prov in route.providers:
             # "documentation" / "government" / "forum" are web-search refinements
             target = "web" if prov in ("documentation", "government", "company") else prov
-            hits = self._cached_search(target, q.text)
+            hits, err = self._cached_search(target, q.text)
+            if err:
+                errors.append(err)
             for h in hits:
                 h.metadata.setdefault("via_provider", prov)
             results.extend(hits)
-        return results
+        return results, errors
 
     def _register_result(self, project_id: str, query_id: str, hit) -> Source | None:
         if not hit.url.startswith(("http://", "https://")):

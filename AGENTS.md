@@ -128,7 +128,7 @@ source .venv/bin/activate
 All runtime deps (including `fastapi`/`uvicorn`) come from
 `[project.dependencies]` — there is nothing extra to install.
 
-**Verified baseline:** `292 passed, 1 skipped` in ~2 min. The suite is fully
+**Verified baseline:** `308 passed, 1 skipped` in ~2 min. The suite is fully
 offline; no network or model needed.
 
 `gar.yaml` is **optional**. `AppConfig.load()` looks for `gar.yaml` /
@@ -157,7 +157,7 @@ research repair-startup <pid>|--all               # dedupe startup entities (INV
   error lines. Use plain `pytest` or `pytest --tb=short` to read results.
 - `pytest-timeout` is active: `timeout = 120` seconds per test.
 - `scripts/mutation_check.py` intentionally prints a `FAILED` pytest line —
-  that is the mutation being detected. Judge it by the `M-1..M-9: tests
+  that is the mutation being detected. Judge it by the `M-1..M-15: tests
   DETECTED` lines and the exit code, not by the FAILED line.
 - `scripts/reaudit.py` currently reports 14/14 fixed.
 - `evals/runners/run_eval.py --offline` **rewrites the tracked file**
@@ -448,7 +448,7 @@ BUG_AUDIT.md, BAD_DECISIONS.md (treat as archaeology, not active spec).
 [ ] Smallest correct change; no duplicate abstraction; no unrelated churn
 [ ] Error/failure paths considered and tested
 [ ] Tests added/updated (real boundary; invariant covered; mutation for scorers/gates)
-[ ] Full suite + affected evals pass; `mutation_check.py` still 9/9 detected
+[ ] Full suite + affected evals pass; `mutation_check.py` still 15/15 detected
 [ ] Per-phase review subagent ran; findings fixed (§2.3)
 [ ] Final review subagent passed against the original requirements (§2.4)
 [ ] Diff reviewed; debug debris/temp scripts removed; tracked files not dirtied

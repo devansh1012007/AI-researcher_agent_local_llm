@@ -6,7 +6,7 @@ import logging
 import httpx
 
 from research_engine.providers.academic.base import AcademicProvider, clean_query
-from research_engine.providers.search.base import RawSearchHit
+from research_engine.providers.search.base import RawSearchHit, SearchProviderError
 
 log = logging.getLogger(__name__)
 
@@ -53,4 +53,4 @@ class CrossrefProvider(AcademicProvider):
             return out
         except httpx.HTTPError as exc:
             log.warning("crossref search failed: %s", exc)
-            return []
+            raise SearchProviderError(f"crossref: {exc}") from exc

@@ -8,7 +8,7 @@ import xml.etree.ElementTree as ET
 import httpx
 
 from research_engine.providers.academic.base import AcademicProvider, clean_query
-from research_engine.providers.search.base import RawSearchHit
+from research_engine.providers.search.base import RawSearchHit, SearchProviderError
 
 log = logging.getLogger(__name__)
 
@@ -36,7 +36,7 @@ class ArxivProvider(AcademicProvider):
             return self._parse(resp.text)
         except (httpx.HTTPError, ET.ParseError) as exc:
             log.warning("arxiv search failed: %s", exc)
-            return []
+            raise SearchProviderError(f"arxiv: {exc}") from exc
 
     def _parse(self, xml_text: str) -> list[RawSearchHit]:
         root = ET.fromstring(xml_text)

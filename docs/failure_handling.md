@@ -12,6 +12,10 @@
 | Failure | Detection | Response |
 |---|---|---|
 | HTTP timeout / transport | `DocumentFetcher` | retry w/ backoff (`NETWORK`), then source FAILED |
+| Search provider error | provider raises `SearchProviderError` | query flagged failed (+ reason), failure counted; when the failing iteration produced no new evidence the run reports PROVIDER_DEGRADED, never CONVERGED |
+| Search returned nothing | provider returns `[]` | NOT a failure — the query is marked executed with 0 results |
+| Provider not configured | no provider registered | NOT a failure — an intentional offline run, not an outage |
+| Search backend blocks bots (403/202) | non-200 from the search endpoint | counts as a provider FAILURE (the search did not happen). Live runs against a bot-blocked endpoint now report PROVIDER_DEGRADED where they used to report "no results" — that is the honest reading. |
 | Rate limit 429/503 | status code | raised → retried with longer backoff |
 | Other 4xx/5xx | status code | fail fast, source marked FAILED + reason |
 | Oversized document | stream cap | truncate at `max_document_size_mb` |

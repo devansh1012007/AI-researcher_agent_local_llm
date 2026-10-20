@@ -6,7 +6,7 @@ import logging
 import httpx
 
 from research_engine.providers.academic.base import AcademicProvider, clean_query
-from research_engine.providers.search.base import RawSearchHit
+from research_engine.providers.search.base import RawSearchHit, SearchProviderError
 
 log = logging.getLogger(__name__)
 
@@ -56,7 +56,7 @@ class OpenAlexProvider(AcademicProvider):
             return out
         except httpx.HTTPError as exc:
             log.warning("openalex search failed: %s", exc)
-            return []
+            raise SearchProviderError(f"openalex: {exc}") from exc
 
     @staticmethod
     def _reconstruct_abstract(inv_index: dict) -> str:

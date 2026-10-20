@@ -242,8 +242,8 @@ def check_convergence():
                           Budget(AppConfig.load(),
                                  ResearchProject(id="p", question_raw="q")),
                           {"total_evidence": 12, "new_evidence": 0,
-                           "fetch_successes": 0, "fetch_failures": 4,
-                           "queries_executed": 6, "duplicate_rate": 0.0,
+                           "retrieval_failures": 4,
+                           "duplicate_rate": 0.0,
                            "rejection_rate": 0.0, "high_importance_gaps": 1,
                            "new_claims": 0, "domains": 2})
     record("P0-04", "provider outage ≠ CONVERGED",

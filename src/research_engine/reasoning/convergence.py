@@ -50,18 +50,25 @@ class ConvergenceAnalyzer:
         high_gaps = stats.get("high_importance_gaps", 0)
         dup_rate = stats.get("duplicate_rate", 0.0)
         rej_rate = stats.get("rejection_rate", 0.0)
-        fetch_successes = stats.get("fetch_successes")
-        fetch_failures = stats.get("fetch_failures", 0)
-        queries_executed = stats.get("queries_executed", 0)
+        retrieval_failures = stats.get("retrieval_failures", 0)
 
         # P0-04 INVARIANT-006: failure is not saturation. Degradation means
         # retrieval ATTEMPTED and FAILED (network/provider), not merely
         # "nothing new" (which cached-duplicate silence also produces).
-        if (new_ev == 0 and fetch_failures > 0 and queries_executed > 0):
+        # Decision: the signal is the count of failed retrievals.
+        # Why: the old test was `fetch_failures > 0 and queries_executed > 0`,
+        # which could NEVER fire in production — a fetch failure marks the
+        # SOURCE row, so `documents_failed` is always 0, and the plan-time
+        # queries are executed in the NEXT iteration, so `queries_executed`
+        # was 0 when it was read. A search outage therefore fell through to
+        # CONVERGED.
+        # Constraint: a failure implies an attempt, so no separate
+        # "attempts" term is needed.
+        if new_ev == 0 and retrieval_failures > 0:
             return ConvergenceDecision(
                 True, StopReason.PROVIDER_DEGRADED,
-                f"{queries_executed} queries ran; {fetch_failures} fetch "
-                "failures and 0 new evidence this iteration")
+                f"{retrieval_failures} retrieval failures (failed searches "
+                "and/or failed fetches) and 0 new evidence this iteration")
         if total_ev > 0 and rej_rate > r.duplicate_rate_converged:
             # hallucinated-extraction pathology: stop as DEGRADED for diagnosis,
             # never report as converged research

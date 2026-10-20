@@ -1,8 +1,16 @@
 # FIX PLAN — verified defect backlog and remediation phases
 
-**Status:** in progress. W1 (P0-1 packaging) and its side-fix (P1-11
-hermeticity) are **implemented and reviewed**; the rest is unimplemented. Each
-fixed item is marked **FIXED (Wn)**; the wave table at §7 tracks progress.
+**Status:** in progress. **W1, W2 and W3 are implemented and independently
+reviewed.** Each fixed item is marked **FIXED (Wn)**; the wave table at §7
+tracks progress. Everything else is unimplemented.
+
+| Wave | Item | Result | Verified by |
+|---|---|---|---|
+| W1 | P0-1 packaging | The wheel ships all 16 template files and declares `fastapi`/`uvicorn`; a clean install runs `research doctor` | `scripts/check_dist.py`, `tests/unit/test_packaging.py` |
+| W1 | P1-11 hermeticity | The suite no longer reads the developer's `gar.yaml`; **zero** outbound sockets measured | socket-level probe over the suite |
+| W2 | P0-2 auth bypass | `research serve --host 0.0.0.0` now requires `X-API-Token`; the bind address and the authorised address are the same value (INV-014) | real uvicorn on `0.0.0.0`, 401/401/200 |
+| W3 | P0-4 failure ≠ empty | A search outage yields `PROVIDER_DEGRADED`, never `CONVERGED`; providers raise, the failure is recorded on the query row | end-to-end through the real orchestrator |
+| — | P1-8…P1-10, P1-12…P1-16 | found during the waves, still open | see §2 |
 
 **Decisions taken by the owner (2026-10-20):**
 
@@ -243,7 +251,7 @@ expectations (IDs get longer; `research trace-claim <id> clm_000001` in
 
 ---
 
-### P0-4 A search-provider outage is reported as CONVERGED [V]
+### P0-4 A search-provider outage is reported as CONVERGED [V] — **FIXED (W3)**
 
 **Root cause.** Two halves:
 
@@ -266,22 +274,70 @@ INV-006, and `docs/invariants.md:13` states the invariant as if it holds.
 violated. This is exactly the "test that does not test the thing" failure the
 audit warned about.
 
-**Fix**
+**Fix (implemented in W3)**
 
-- `retrieval.py` must distinguish *failed* from *empty*: record a per-query
-  failure and a `search_failures` counter; do not mark a failed query as
-  successfully executed. Per-query isolation is correct — one bad provider must
-  not kill the loop — but the **aggregate** must not lie.
-- `convergence.py` must consume `search_failures` and return
-  `PROVIDER_DEGRADED` when retrieval was attempted and failed, even if
-  `fetch_failures == 0`.
-- `core/orchestrator.py` must surface the new counter in the stats dict it
-  passes to the analyzer.
+The investigation showed the defect was **deeper than the plan assumed**: the
+existing `PROVIDER_DEGRADED` guard could never fire in production.
 
-**Regression test.** `tests/invariants/test_convergence_semantics.py`: search
-provider raises for every query ⇒ `stop_reason == PROVIDER_DEGRADED`, **not**
-CONVERGED. Add the mutation to `scripts/mutation_check.py` (per AGENTS.md §11:
-mutation first for gates) — mutate the new guard and require detection.
+- `fetch_failures` was structurally always 0 — a fetch failure marks the
+  **Source** row, so no Document row is ever written with a non-PARSED
+  status. The real fetch-failure counter is `sources_rejected`.
+- `queries_executed` was always 0 in the executing iteration (queries carry
+  their *creation* iteration).
+- The failure was destroyed one layer above the code that needed it: every
+  provider swallowed the error and returned `[]`, so `retrieval.py`'s own
+  handler rarely even saw an exception.
+
+So the fix had to make the whole chain honest:
+
+- `providers/search/base.py`: new `SearchProviderError`; the contract now
+  says a provider **raises** on failure and returns `[]` only for a
+  successful search that found nothing.
+- `providers/search/duckduckgo.py` + `providers/academic/*.py`: raise instead
+  of returning `[]`. DuckDuckGo distinguishes "every attempt failed" from
+  "a 200 response with no hits"; a 429 rate limit is a failure, not an empty
+  result.
+- `pipeline/retrieval.py`: the worker records the failure on the query row
+  (`failed`, `failure_reason`) instead of flattening it. A cache hit and a
+  provider that was never configured are **not** failures — counting those
+  would report an intentional offline run as an outage.
+- `models/research.py`: `SearchQuery.failed` / `.failure_reason` (JSON-only,
+  like `results_count`; counted in Python, no schema migration).
+- `core/orchestrator.py`: `retrieval_failures` = Δ(search failures) +
+  Δ(fetch failures), replacing the two metrics that were always zero.
+- `reasoning/convergence.py`: the guard is now
+  `new_evidence == 0 AND retrieval_failures > 0` ⇒ `PROVIDER_DEGRADED`. A
+  failure implies an attempt, so no separate "attempts" term is needed.
+
+**Regression coverage**
+
+- `tests/invariants/test_search_failure_semantics.py` (NEW, 14 tests) — the
+  chain the old suite never exercised: a provider that raises is recorded on
+  the query row; a search that succeeded and found nothing is NOT a failure;
+  an unconfigured provider is NOT a failure; **every in-tree provider honours
+  the raise contract** (parameterised over all six); a rate limit is a
+  failure; **a total outage through the real orchestrator yields
+  `PROVIDER_DEGRADED`, never `CONVERGED`**.
+- `tests/invariants/test_convergence_semantics.py`: the old outage test now
+  uses the real key, plus a search-outage case and a "failures with progress
+  are not degradation" case. The keys the analyzer no longer reads were
+  removed so the dicts state the real contract.
+- `scripts/mutation_check.py`: **M-2** re-anchored to the new condition;
+  **M-10** (the worker stops recording the failure), **M-11** (the DuckDuckGo
+  wrapper swallows it again) and **M-12…M-15** (the same, per academic
+  provider file) added — 15/15 DETECTED.
+- `docs/invariants.md` INV-006/INV-012 enforcement columns, `docs/convergence.md`
+  and `docs/failure_handling.md` updated: both invariants were **false as
+  written** before this change. INV-012's row now names the one boundary
+  that is still open (the watcher — P1-14).
+
+**Review outcome (independent reviewer).** No blockers. Five SHOULD-FIX
+items, all addressed: the four academic providers had no contract coverage
+(now parameterised + M-12…M-15); "an unconfigured provider is not a failure"
+was untested (now a test); `docs/failure_handling.md` overstated the
+guarantee (now qualified — degradation needs *zero new evidence*); the W1 row
+of this plan had been overwritten with W3's test count (restored); the
+convergence tests still passed the dead stats keys (removed).
 
 ---
 
@@ -433,23 +489,6 @@ delete the dead flag or wire it.
 **Fix:** correct the example; fail closed on unknown mode; delete or wire the
 dead knobs.
 
-### P1-12 `research serve` ignores the global `--config` flag [V] — **OPEN, found during W2**
-
-`cli/main.py cmd_serve` obtains its config from the global context
-(`_ctx4()` → `AppConfig.load()` with no path), so the documented global flag
-`research --config <file> serve ...` has **no effect**: the operator's token,
-host and port in that file are never seen by the guard, the bind, or the app.
-Verified: `research --config <file with host 0.0.0.0 + auth_token> serve
---host 0.0.0.0` still refused to start.
-
-**Fix.** `cmd_serve` should load the config from `--config` (the same
-`_cfg(args)` path the other commands use) and build its context from it.
-
-**Risk.** Medium: `cmd_serve` currently shares the *global* context with the
-rest of the process. Switching to a per-invocation context changes identity
-semantics for anything that reads the global context while the server runs.
-This is why it was not folded into W2.
-
 ### P1-8 `render()` crashes on untrusted content that contains `{{...}}` [V] — **OPEN, found during W1**
 
 **Root cause.** `prompts/registry.py:24-34` substitutes the supplied kwargs
@@ -557,8 +596,82 @@ existed.
   `.env` file (nothing loads it; there is no dotenv dependency).
 
 **Verification.** With `gar.yaml` present (provider `ollama`), the suite now
-passes: 292 passed, 1 skipped. Before the fix, the same tree failed
+passes: 308 passed, 1 skipped. Before the fix, the same tree failed
 `tests/integration/test_phase4_integration.py::TestPlatformEndToEnd::test_full_flow_services_only`.
+
+### P1-12 `research serve` ignores the global `--config` flag [V] — **OPEN, found during W2**
+
+`cli/main.py cmd_serve` obtains its config from the global context
+(`_ctx4()` → `AppConfig.load()` with no path), so the documented global flag
+`research --config <file> serve ...` has **no effect**: the operator's token,
+host and port in that file are never seen by the guard, the bind, or the app.
+Verified: `research --config <file with host 0.0.0.0 + auth_token> serve
+--host 0.0.0.0` still refused to start.
+
+**Fix.** `cmd_serve` should load the config from `--config` (the same
+`_cfg(args)` path the other commands use) and build its context from it.
+
+**Risk.** Medium: `cmd_serve` currently shares the *global* context with the
+rest of the process. Switching to a per-invocation context changes identity
+semantics for anything that reads the global context while the server runs.
+This is why it was not folded into W2.
+
+### P1-13 The "forum" route leg resolves to a provider that does not exist [V] — **OPEN, found during W3**
+
+`pipeline/retrieval.py:82` maps only `("documentation", "government",
+"company")` to the `web` provider, while the comment on the line above says
+*"documentation / government / **forum** are web-search refinements"*. So the
+`forum` refinement resolves to a provider literally named `forum`, which is
+never registered ⇒ `ProviderRegistry.get_any("forum")` returns `None` ⇒ the
+lookup returns nothing.
+
+`pipeline/routing.py` has `DEFAULT_ROUTES["PAIN"] = ["web", "forum"]`, so
+**the forum leg of the PAIN branch — a primary signal source in startup mode
+— has always returned zero results, silently.** (The W3 fix deliberately
+does NOT count a missing provider as a failure, so this stays invisible.)
+
+**Fix.** Map `forum` to the `web` provider as the comment says, and make the
+route→provider mapping explicit rather than a literal tuple in the worker.
+
+### P1-14 The watcher boundary still flattens a provider failure [V] — **OPEN, found during W3**
+
+`platform/watchers.py:154-157` calls a search provider and swallows every
+exception (`except Exception: pass`), then records `status: "OK", new: 0` — a
+total outage looks like "no new sources found". The same file's academic
+leg at `:163` calls `reg.academic.get(name)`, but `ProviderRegistry` has no
+`academic` attribute (only `_academic`, `get_any`, `get_search`) ⇒ an
+`AttributeError`, swallowed by `except Exception: continue` ⇒ **the watcher's
+academic search has never run**.
+
+INV-012 names "every external boundary"; this one is still open, which the
+invariant row now says explicitly.
+
+**Fix.** Use `reg.get_any(name)`; record the failure on the watcher run
+(status/reason) instead of "OK"; and report the watcher outcome honestly.
+
+### P1-15 A search backend that blocks bots now reports a failure, not "no results" [V] — **OPEN, behaviour change**
+
+DuckDuckGo's HTML endpoints commonly answer `403`/`202` to bots. Those are
+non-200 responses, so the provider now raises `SearchProviderError` instead of
+returning `[]`. A live run against a bot-blocked endpoint therefore reports
+`PROVIDER_DEGRADED` where it used to report "no results" — and, because the
+failure is now counted, it can stop the run earlier.
+
+This is the honest reading (the search did not happen), but it is a real
+behaviour change for live runs and it is documented in
+`docs/failure_handling.md`. If it proves too noisy in practice, the fix is a
+SearXNG instance (`gar.example.yaml` recommends one) — not a re-hiding of
+the failure.
+
+### P1-16 A 200 response that is not a result page still reads as "found nothing" [V] — **OPEN, low**
+
+`providers/search/duckduckgo.py`: a `200` whose body is not a result page (a
+bot-challenge, a layout change) sets `served = True`, so the provider returns
+`[]` — the honest "the backend answered, there was nothing in the answer"
+reading, but the *parse* silently produced nothing. Closing this needs the
+provider to tell "no results" from "not a result page" (e.g. require DDG's
+no-results marker). Deliberately not done in W3; the current behaviour is
+pinned by a test so it cannot drift unnoticed.
 
 
 ## 3. P2 — test integrity, dead code, doc drift
@@ -710,15 +823,15 @@ boundary, so P0-2 is a P0 and gets an explicit regression test.
 
 | Wave | Scope | Why this order | Gate |
 |---|---|---|---|
-| **W1** | P0-1 packaging (+ P1-11 hermeticity side-fix) | Unblocks clean installs and the container; independent of everything else | **DONE**: wheel contains 16/16 template files; `research doctor` exits 0 from a clean install; `scripts/check_dist.py` passes; 292 passed / 1 skipped; zero outbound sockets |
+| **W1** | P0-1 packaging (+ P1-11 hermeticity side-fix) | Unblocks clean installs and the container; independent of everything else | **DONE**: wheel contains 16/16 template files; `research doctor` exits 0 from a clean install; `scripts/check_dist.py` passes; 292 passed / 1 skipped at the time of W1; zero outbound sockets |
 | **W2** | P0-2 auth bypass | With D-3 this is the *only* auth boundary; must land before the container runs anywhere real | **DONE**: 401 without a token on a real `0.0.0.0` bind; INV-014 row + M-7/M-8/M-9 mutations all DETECTED |
-| **W3** | P0-4 failure≠empty (search) | Small, self-contained, unblocks honest convergence reporting | New convergence test + mutation M-10 detected |
+| **W3** | P0-4 failure≠empty (search) | Small, self-contained, unblocks honest convergence reporting | **DONE**: a total outage through the real orchestrator yields PROVIDER_DEGRADED; M-2 re-anchored, M-10..M-15 added; 308 passed / 1 skipped |
 | **W4** | P0-5 sandbox escape | Security; self-contained | Override-write test green; existing sandbox suite green |
 | **W5** | P0-3 ULID migration | Now a one-function change, but it touches every entity creation path indirectly — needs its own wave and a full-suite run | Restart test green; monotonicity test green; `data_repair` ordering test green; full suite green |
 | **W6** | P0-6 config honesty (D-2) | Needs the provider registry; implement the gate, delete `respect_robots` | New test: LOCAL_ONLY ⇒ no network providers registered; unknown mode ⇒ LOCAL_ONLY |
 | **W7** | P1-1…P1-7 | Contract/correctness batch; each is small | Per-item tests + full suite |
 | **W8** | P2-1/P2-2 test harness + property layer | Prevents recurrence of the BUG-03/BUG-06 class | Conformance suite green |
-| **W9** | P2-3…P2-7 dead code, doc drift | Cleanup; do it after behaviour is correct so the docs describe the final state | `scripts/reaudit.py` still 14/14; `mutation_check.py` still 9/9+ |
+| **W9** | P2-3…P2-7 dead code, doc drift | Cleanup; do it after behaviour is correct so the docs describe the final state | `scripts/reaudit.py` still 14/14; `mutation_check.py` still 15/15+ |
 | **W10** | P3-1…P3-9 metric honesty | Changes measured numbers; needs mutation-first | Each scorer has a mutation in `mutation_check.py` that is detected |
 
 **Per wave, the AGENTS.md §2 workflow applies**: context subagent → atomic

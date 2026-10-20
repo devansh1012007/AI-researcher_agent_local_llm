@@ -378,9 +378,14 @@ class Orchestrator:
             "new_claims": metrics.new_claims_this_iter,
             "duplicate_rate": metrics.duplicate_rate,
             "rejection_rate": metrics.rejection_rate,
-            "fetch_successes": max(0, metrics.documents_fetched - (prev_metrics[0].documents_fetched if prev_metrics else 0)),
-            "fetch_failures": max(0, metrics.documents_failed - (prev_metrics[0].documents_failed if prev_metrics else 0)),
-            "queries_executed": metrics.queries_this_iter,
+            # P0-04: the degradation signal is "retrieval was attempted and
+            # FAILED" — search failures plus fetch failures.
+            # The old test was `fetch_failures > 0 and queries_executed > 0`,
+            # which could never fire: a fetch failure marks the SOURCE row
+            # (not a document), so `documents_failed` is always 0, and
+            # `queries_executed` is 0 in the executing iteration.
+            "retrieval_failures": (max(0, metrics.search_failures - (prev_metrics[0].search_failures if prev_metrics else 0))
+                                   + max(0, metrics.sources_rejected - (prev_metrics[0].sources_rejected if prev_metrics else 0))),
             "high_importance_gaps": len([g for g in gaps if not g.resolved and g.importance >= 0.6]),
             "domains": metrics.source_diversity_domains,
         })
@@ -589,6 +594,10 @@ class Orchestrator:
         m.duplicate_rate = round(self.repos.evidence.duplicate_ratio(p.id), 3)
         m.queries_this_iter = len([q for q in self.repos.queries.all(p.id, "executed=1", ())
                                    if q.iteration == it])
+        # P0-04: a failed retrieval must be countable. `failed` is a JSON-only
+        # field (like `results_count`), so it is counted in Python, not SQL.
+        m.search_failures = len([q for q in self.repos.queries.all(p.id, "executed=1", ())
+                                 if q.failed])
         m.new_evidence_rate = round(m.new_evidence_this_iter / max(1, cur_ev_total), 3)
         m.gap_resolution_rate = round(m.gaps_resolved / max(1, m.gaps_resolved + m.gaps_open), 3)
         parsed_sources = self.repos.sources.all(p.id, "status='PARSED'")

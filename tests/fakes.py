@@ -10,7 +10,8 @@ import re
 import httpx
 
 from research_engine.providers.llm.base import LLMProvider, LLMRoleConfig
-from research_engine.providers.search.base import RawSearchHit, SearchProvider
+from research_engine.providers.search.base import (RawSearchHit, SearchProvider,
+                                                    SearchProviderError)
 
 
 # ---------------------------------------------------------------------------
@@ -127,12 +128,18 @@ class ScriptedLLM(LLMProvider):
 class FakeSearchProvider(SearchProvider):
     name = "fake_web"
 
-    def __init__(self, hits_per_query: int = 3):
+    def __init__(self, hits_per_query: int = 3, fail: bool = False):
         self.hits_per_query = hits_per_query
+        # `fail` simulates a provider outage. The provider contract says a
+        # failure RAISES (see SearchProviderError) — a successful search that
+        # found nothing returns [] instead.
+        self.fail = fail
         self.queries_seen: list[str] = []
 
     def search(self, query: str, max_results: int = 10) -> list[RawSearchHit]:
         self.queries_seen.append(query)
+        if self.fail:
+            raise SearchProviderError(f"{self.name}: simulated outage")
         out = []
         for i in range(min(self.hits_per_query, max_results)):
             slug = re.sub(r"[^a-z0-9]+", "-", query.lower())[:30]
@@ -149,13 +156,16 @@ class FakeSearchProvider(SearchProvider):
 class FakeAcademicProvider(SearchProvider):
     name = "fake_academic"
 
-    def __init__(self, n: int = 2, with_pdf: bool = True):
+    def __init__(self, n: int = 2, with_pdf: bool = True, fail: bool = False):
         self.n = n
         self.with_pdf = with_pdf
+        self.fail = fail
         self.queries_seen: list[str] = []
 
     def search(self, query: str, max_results: int = 10) -> list[RawSearchHit]:
         self.queries_seen.append(query)
+        if self.fail:
+            raise SearchProviderError(f"{self.name}: simulated outage")
         out = []
         # deterministic per-query ids: distinct queries find distinct papers
         qhash = abs(hash(query)) % 9000 + 1000

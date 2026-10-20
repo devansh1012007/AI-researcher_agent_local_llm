@@ -12,7 +12,8 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 import httpx
 
-from research_engine.providers.search.base import RawSearchHit, SearchProvider
+from research_engine.providers.search.base import (RawSearchHit, SearchProvider,
+                                                    SearchProviderError)
 
 log = logging.getLogger(__name__)
 
@@ -47,6 +48,7 @@ class DuckDuckGoProvider(SearchProvider):
             ("GET", "https://lite.duckduckgo.com/lite/", {"q": query}),
             ("POST", "https://html.duckduckgo.com/html/", None),
         ]
+        served = False
         for method, base, params in attempts:
             try:
                 if method == "GET":
@@ -58,11 +60,16 @@ class DuckDuckGoProvider(SearchProvider):
                 if resp.status_code != 200:
                     log.warning("ddg status %s from %s", resp.status_code, base)
                     continue
+                served = True
                 hits = self._parse(resp.text, max_results)
                 if hits:
                     return hits
             except httpx.HTTPError as exc:
                 log.warning("ddg attempt %s failed: %s", base, exc)
+        if not served:
+            # Every attempt failed: that is a provider failure, not an empty
+            # result. See SearchProviderError.
+            raise SearchProviderError("duckduckgo: all attempts failed")
         return []
 
     def _parse(self, html: str, max_results: int) -> list[RawSearchHit]:
@@ -105,4 +112,4 @@ class SearxngProvider(SearchProvider):
             return out
         except (httpx.HTTPError, ValueError) as exc:
             log.warning("searxng failed: %s", exc)
-            return []
+            raise SearchProviderError(f"searxng: {exc}") from exc

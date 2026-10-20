@@ -66,9 +66,10 @@ class ResearchMetrics(Entity):
     iteration: int = 0
     sources_discovered: int = 0
     sources_accepted: int = 0
-    sources_rejected: int = 0
+    sources_rejected: int = 0          # sources marked FAILED (fetch OR parse failure)
     documents_fetched: int = 0
     documents_failed: int = 0
+    search_failures: int = 0           # queries whose provider failed
     evidence_created: int = 0
     evidence_rejected: int = 0
     unique_claims: int = 0
