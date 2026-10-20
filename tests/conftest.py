@@ -1,12 +1,34 @@
 """Shared fixtures for offline testing."""
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parent))
+
+# The suite must be HERMETIC: it cannot depend on the developer's working
+# directory. `AppConfig.load()` reads a CWD-relative `gar.yaml`, and the
+# shipped `gar.example.yaml` selects the `ollama` provider — so as soon as
+# that file existed (the documented `scripts/setup_dev.sh` copies it there),
+# the suite reached for a real local LLM and failed with "connection refused"
+# instead of exercising the code under test.
+# Env overrides have the highest precedence in `AppConfig.load()`, so these
+# neutralise every config load, including the ones buried in production code
+# (`services/context.py`, `platform/job_runners.py`, ...).
+# The embeddings provider is pinned too: left alone, an ambient
+# `embeddings.provider: ollama` made the suite attempt a live HTTP call to
+# localhost:11434 (it "passed" only because the provider swallows the error).
+# NOTE: only string-valued settings are pinned here. The env walker cannot
+# coerce a list (a list field becomes the raw string) — see FIX_PLAN P1-10,
+# which is why `search.academic_providers` is cleared per-fixture instead.
+os.environ["GAR_MODELS__EXTRACTOR__PROVIDER"] = "mock"
+os.environ["GAR_MODELS__REASONING__PROVIDER"] = "mock"
+os.environ["GAR_MODELS__SYNTHESIS__PROVIDER"] = "mock"
+os.environ["GAR_SEARCH__WEB_PROVIDER"] = "none"
+os.environ["GAR_EMBEDDINGS__PROVIDER"] = "hashing"
 
 from fakes import (FakeAcademicProvider, FakeSearchProvider, ScriptedLLM,
                    make_fake_transport)  # noqa: E402
@@ -22,6 +44,8 @@ def cfg(tmp_path) -> AppConfig:
     c.research.max_iterations = 2
     c.research.max_queries_per_iteration = 4
     c.resources.max_parallel_fetches = 2
+    c.search.web_provider = "none"
+    c.search.academic_providers = []
     return c
 
 

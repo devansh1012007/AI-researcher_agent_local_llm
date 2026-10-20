@@ -20,3 +20,8 @@ research_data/
 
 # Env
 .env
+
+# Local config (the tracked template is gar.example.yaml)
+gar.yaml
+gar.yml
+config/gar.yaml

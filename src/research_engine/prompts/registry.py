@@ -13,6 +13,23 @@ import yaml
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 
+# Decision: a missing templates directory is an incomplete INSTALLATION, not a
+# missing prompt. The two failures need different fixes, so they get different
+# messages.
+# Why: the templates are package data; if they are absent, the wheel was built
+# without them and every prompt render will fail. An actionable message beats a
+# bare FileNotFoundError from iterdir().
+_INSTALL_INCOMPLETE = (
+    "prompt templates directory is missing at {path}. The installation is "
+    "incomplete (package data was not installed). Reinstall with "
+    "`pip install .` or use an editable install (`pip install -e .`)."
+)
+
+
+def _require_templates_dir() -> None:
+    if not TEMPLATES_DIR.is_dir():
+        raise FileNotFoundError(_INSTALL_INCOMPLETE.format(path=TEMPLATES_DIR))
+
 
 class PromptSpec:
     def __init__(self, name: str, version: str, system: str, template: str):
@@ -36,6 +53,7 @@ class PromptSpec:
 
 @functools.lru_cache(maxsize=None)
 def _load(name: str, version: str | None = None) -> PromptSpec:
+    _require_templates_dir()
     base = TEMPLATES_DIR / name
     if not base.exists():
         raise FileNotFoundError(f"prompt template '{name}' not found")
@@ -58,10 +76,8 @@ def get_prompt(name: str, version: str | None = None) -> PromptSpec:
     return _load(name, version)
 
 
-PROMPT_VERSIONS = {}  # populated at load for reproducibility records
-
-
 def record_versions() -> dict[str, str]:
+    _require_templates_dir()
     out = {}
     for d in TEMPLATES_DIR.iterdir():
         if d.is_dir():

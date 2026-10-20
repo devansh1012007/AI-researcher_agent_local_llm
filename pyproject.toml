@@ -16,6 +16,8 @@ dependencies = [
     "trafilatura>=1.8",
     "pypdf>=4.0",
     "rich>=13.0",
+    "fastapi>=0.100.0",
+    "uvicorn>=0.15.0",
 ]
 
 [project.optional-dependencies]
@@ -29,6 +31,21 @@ research = "research_engine.cli.main:app"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+# The prompt templates are DATA, not modules: `prompts/templates/` has no
+# __init__.py, so setuptools would otherwise copy zero template files into the
+# wheel and every prompt render would fail in a clean install.
+# Decision: declare the data explicitly.
+# Why: the editable install (used by dev) hides this — it points at the source
+# tree — so the defect is invisible until a wheel is built.
+# Constraint: keep these globs in sync with the template layout
+# (templates/<name>/vN.txt + vN.meta.yaml). tests/unit/test_packaging.py
+# asserts every template file is covered.
+# NOTE: the key MUST stay quoted. An unquoted `research_engine.prompts = [...]`
+# is a TOML *nested table* (`package-data -> research_engine -> prompts`),
+# which setuptools does not understand. The quotes make it one literal key.
+"research_engine.prompts" = ["templates/*/*.txt", "templates/*/*.meta.yaml"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
