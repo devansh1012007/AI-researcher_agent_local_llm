@@ -43,3 +43,13 @@ reports or project DBs.
 API binds 127.0.0.1 by default; CLI refuses non-local binding without an auth
 token; MCP speaks stdio only. Privacy mode (`privacy_mode: true`) disables all
 external calls (#99-103).
+
+The bind address is the only auth boundary (INV-014): the server binds and the
+API authorises on the *same* address, and anything that is not provably
+loopback (`127.0.0.0/8`, `::1`, `localhost`) — including a wildcard bind such
+as `0.0.0.0` — requires `X-API-Token`. The token is compared in constant time.
+
+Only the liveness/metadata probes (`/health`, `/ready`, `/info`) and FastAPI's
+own `/docs`, `/redoc`, `/openapi.json` are reachable without a token. The
+`/events/stream` feed is gated: it carries every event type, so on an external
+bind it is not an open pipe.

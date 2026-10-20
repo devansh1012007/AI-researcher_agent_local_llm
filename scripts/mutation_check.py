@@ -63,6 +63,28 @@ MUTATIONS = [
         weights = [_ev_weight(e) for e in sup]
         best_single = min(1.0, sum(weights) / 3.0 + 0.35 * (len(weights) // 3))''',
      "tests/invariants/test_claim_faithfulness.py::TestHypothesisWeighting"),
+
+    # INV-014: the bind address the server uses and the address the API
+    # authorises on must be the same value. M-7 breaks the propagation, M-8
+    # breaks the predicate — either one re-opens the "serve the whole API
+    # unauthenticated on 0.0.0.0" hole.
+    ("M-7", "src/research_engine/cli/main.py",
+     '''    ctx.cfg.platform.api.host = host''',
+     '''    pass  # MUTATION: effective bind address not propagated to the app''',
+     "tests/invariants/test_api_auth_boundary.py"),
+
+    ("M-8", "src/research_engine/api/app.py",
+     '''        if is_loopback_host(host_cfg):''',
+     '''        if True:  # MUTATION: treat every bind as loopback''',
+     "tests/invariants/test_api_auth_boundary.py"),
+
+    # The dependency must resolve the context the same way the routes do.
+    # Reading the raw holder left it None at check time, so an app created
+    # without an explicit context could never require a token.
+    ("M-9", "src/research_engine/api/app.py",
+     '''    auth = make_auth_dependency(get_ctx)''',
+     '''    auth = make_auth_dependency(lambda: holder.get("ctx"))''',
+     "tests/invariants/test_api_auth_boundary.py"),
 ]
 
 

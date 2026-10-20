@@ -10,12 +10,14 @@ from __future__ import annotations
 
 import json
 import queue as _queue
+import secrets
 from typing import Any
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
+from research_engine.core.config import is_loopback_host
 from research_engine.platform.errors import ClassifiedError
 from research_engine.services.context import ServiceContext
 from research_engine.services.research_service import (
@@ -68,7 +70,7 @@ def create_app(ctx: ServiceContext | None = None) -> FastAPI:
 
     app = FastAPI(title="GAR Research Platform", version="4.0",
                   description="Local-first evidence-grounded research platform")
-    auth = make_auth_dependency(holder)
+    auth = make_auth_dependency(get_ctx)
 
     # ------------------------------------------------------------- health
     @app.get("/health")
@@ -259,8 +261,13 @@ def create_app(ctx: ServiceContext | None = None) -> FastAPI:
             project_id, limit=limit, after_seq=after_seq)
 
     @app.get("/events/stream")
-    def event_stream(requested_project: str = "") -> StreamingResponse:
-        """SSE stream of platform events (spec #108). Simple, no websockets."""
+    def event_stream(requested_project: str = "",
+                     _: str = Depends(auth)) -> StreamingResponse:
+        """SSE stream of platform events (spec #108). Simple, no websockets.
+
+        Auth-gated: the feed carries every event type (project ids, job ids,
+        payloads), so on an external bind it must not be an open pipe.
+        """
         bus = get_ctx().bus
         sub_id, q = bus.subscribe(None)
 
@@ -419,17 +426,30 @@ def _job_dict(j) -> dict:
                               "completed_at")}
 
 
-def make_auth_dependency(holder: dict):
-    """Auth per spec #67: token required ONLY when host is non-local."""
+def make_auth_dependency(get_ctx):
+    """Auth per spec #67: a token is required ONLY when the server is bound
+    to a non-loopback address.
+
+    Decision: resolve the context through the SAME lazy getter the routes
+    use, and compare the token in constant time.
+    Why: reading the holder directly meant a `create_app()` without an
+    explicit context could NEVER require a token (the holder was still None
+    when the dependency ran), which silently disabled the only auth boundary.
+    Constant-time comparison avoids leaking the token through timing.
+    Constraint: the address checked here must be the address the server
+    actually bound — `cmd_serve` writes the effective bind address into the
+    config before the app is created, because the ASGI scope reports the
+    per-connection local address, not the listener's bind address.
+    """
     def dependency(request: Request) -> str:
-        ctx = holder.get("ctx")
-        host_cfg = ctx.cfg.platform.api.host if ctx else "127.0.0.1"
-        external = host_cfg not in ("127.0.0.1", "localhost", "::1")
-        if not external:
+        ctx = get_ctx()
+        host_cfg = ctx.cfg.platform.api.host
+        if is_loopback_host(host_cfg):
             return "local"
-        token = ctx.cfg.platform.api.auth_token if ctx else ""
+        token = ctx.cfg.platform.api.auth_token
         provided = request.headers.get("X-API-Token", "")
-        if not token or provided != token:
+        if not token or not secrets.compare_digest(provided.encode(),
+                                                   token.encode()):
             raise HTTPException(401, detail={"error": {
                 "code": "UNAUTHORIZED",
                 "message": "valid X-API-Token required for external binding"}})

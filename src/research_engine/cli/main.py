@@ -13,7 +13,7 @@ import pathlib
 from rich.console import Console
 from rich.table import Table
 
-from research_engine.core.config import AppConfig
+from research_engine.core.config import AppConfig, is_loopback_host
 
 console = Console()
 
@@ -962,11 +962,19 @@ def cmd_serve(args):
     ctx = _ctx4()
     host = args.host or ctx.cfg.platform.api.host
     port = args.port or ctx.cfg.platform.api.port
-    if host not in ("127.0.0.1", "localhost", "::1") and \
-            not ctx.cfg.platform.api.auth_token:
+    if not is_loopback_host(host) and not ctx.cfg.platform.api.auth_token:
         raise SystemExit(
             "refusing to bind externally without platform.api.auth_token "
             "(spec #67) - set GAR_PLATFORM__API__AUTH_TOKEN")
+    # Decision: the API authorises on the address the server ACTUALLY binds.
+    # Why: --host may differ from the configured host, and the app used to
+    # read the configured one — so `research serve --host 0.0.0.0` served the
+    # whole API unauthenticated while the guard above believed it was
+    # protected.
+    # Constraint: the app can only learn the bind address from this process.
+    # The ASGI scope reports the per-connection local address (and the Host
+    # header is spoofable), so it cannot stand in for the listener's address.
+    ctx.cfg.platform.api.host = host
     from research_engine.api.app import create_app
     uvicorn.run(create_app(ctx), host=host, port=port, log_level="info")
 

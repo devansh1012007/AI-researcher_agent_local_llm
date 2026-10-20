@@ -18,6 +18,7 @@ and the regression tests are named. If a PR breaks one, CI must fail.
 | INV-011 | `$10M`-style magnitudes never parse as prices/market sizes without classification. One canonical money parser (`policies.parse_money` + `classify_numeric_statement`). | `specialists/startup/policies.py`; legacy extractor delegates | `scripts/reaudit.py` BUG-04/05 checks |
 | INV-012 | Failed operations are distinguishable from empty results at every external boundary (search/fetch/extraction/LLM). | provider wrappers raise; convergence consumes failure deltas; `EventBus.dropped_events` counter | convergence tests; `test_bugfix_regressions.py` |
 | INV-013 | Project data is isolated: repos/FTS queries are project-scoped. | per-project SQLite; scoped FTS WHERE | `test_system_invariants.py::TestProjectIsolation` |
+| INV-014 | The API requires a token exactly when the server is bound to a non-loopback address; the address the server binds and the address the app authorises on are the same value. | `cli/main.py cmd_serve` writes the effective bind address into `cfg.platform.api.host` before creating the app; `api/app.py make_auth_dependency` authorises on it via the shared fail-closed `core/config.is_loopback_host` | `tests/invariants/test_api_auth_boundary.py` |
 
 ## Adding a new invariant
 

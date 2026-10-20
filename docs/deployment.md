@@ -18,6 +18,10 @@ research mcp                        # MCP over stdio for clients
 must keep running WITHOUT Docker; containers are packaging, not architecture.
 Data lives in a mounted volume (`./research_data:/data`).
 
+The image's `CMD` is `research serve --host 0.0.0.0`, so the container
+**requires** `GAR_PLATFORM__API__AUTH_TOKEN` — without it the server refuses
+to start. `docker-compose.yml` sets it from `${GAR_TOKEN:?set GAR_TOKEN}`.
+
 ## Operations runbook (#125)
 
 See docs/recovery.md (start/stop/recover), docs/backups.md (backup/restore),

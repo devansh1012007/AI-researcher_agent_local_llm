@@ -5,6 +5,7 @@ Config precedence: defaults < YAML file < environment overrides (GAR_ prefix).
 """
 from __future__ import annotations
 
+import ipaddress
 import os
 from pathlib import Path
 from typing import Any
@@ -97,6 +98,38 @@ class ApiConfig(BaseModel):
     host: str = "127.0.0.1"            # NEVER default to 0.0.0.0 (spec #67)
     port: int = 8000
     auth_token: str = ""               # required when host != 127.0.0.1
+
+
+# Decision: one shared, FAIL-CLOSED predicate decides what counts as a
+# loopback bind address.
+# Why: the server (which binds) and the API (which authorises) must agree, or
+# the token requirement silently disappears. They disagreed once: the CLI bound
+# `--host` while the app read the configured host, so `research serve --host
+# 0.0.0.0` served the whole API unauthenticated.
+# Constraint: anything that is not PROVABLY loopback counts as external, so an
+# unusual host string can never switch auth off. `0.0.0.0` and `::` are
+# wildcards, not loopback.
+_LOOPBACK_HOSTNAMES = frozenset({"localhost", "localhost."})
+
+
+def is_loopback_host(host: str) -> bool:
+    """True only for addresses that provably stay on this machine.
+
+    Accepts loopback IPv4 (127.0.0.0/8), loopback IPv6 (::1) and the
+    `localhost` name — the name is an operator-trusted alias, not a proof
+    (a hosts entry could point it off-loopback). Everything else — a hostname,
+    a LAN address, a wildcard bind, an exotic numeric form — is treated as
+    external, so the strict direction is always the safe one.
+    """
+    h = (host or "").strip().lower()
+    if h.startswith("[") and h.endswith("]"):
+        h = h[1:-1]
+    if h in _LOOPBACK_HOSTNAMES:
+        return True
+    try:
+        return ipaddress.ip_address(h).is_loopback
+    except ValueError:
+        return False
 
 
 class McpConfig(BaseModel):

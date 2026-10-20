@@ -168,7 +168,7 @@ research_data/   per-project workspaces (gitignored)
 | Observability | JSONL structured logs w/ trace ids + secret redaction; metrics registry w/ resource telemetry; incident log; /health /ready |
 | Reliability | error classification → per-class retry policies; provider circuit breakers + failover; token-bucket rate limits; verified backup/restore archives |
 | Living research | watchers detect new/changed sources by content hash; incremental extraction only; SOURCE_UPDATED events flag affected claims |
-| Security | untrusted-content prompt boundaries; filesystem sandbox; minimal env for children; external API binding requires auth token |
+| Security | untrusted-content prompt boundaries; filesystem sandbox; minimal env for children; external API binding requires auth token (the bind address is the boundary — INV-014) |
 
 ## Platform quickstart
 

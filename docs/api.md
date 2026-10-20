@@ -18,6 +18,18 @@ GAR_PLATFORM__API__AUTH_TOKEN=... research serve --host 0.0.0.0
 # clients send: X-API-Token: ...
 ```
 
+The token is required exactly when the server is bound to a non-loopback
+address, and the address the server binds is the one the API authorises on
+(INV-014) — `--host` wins over `platform.api.host`, and the CLI propagates it
+to the app. Loopback binds (`127.0.0.1`, `::1`, `localhost`) are trusted and
+need no token. Only `X-API-Token` is accepted; there is no `Authorization`
+header support.
+
+Unauthenticated on any bind: `GET /health`, `GET /ready`, `GET /info`, and
+FastAPI's own `/docs`, `/redoc` and `/openapi.json`. Every other route —
+including the `GET /events/stream` feed, which carries all event types — needs
+the token on an external bind.
+
 ## Endpoints
 
 ### Health

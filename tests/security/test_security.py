@@ -1,10 +1,11 @@
 """Security tests (spec #62-66/#144/#146): prompt-injection boundaries,
-secret redaction end-to-end, API auth on external binding, path traversal."""
+secret redaction end-to-end, path traversal.
+
+The API auth boundary lives in tests/invariants/test_api_auth_boundary.py:
+it is an executable invariant (INV-014), not a behavioural detail."""
 from __future__ import annotations
 
 import json
-
-import pytest
 
 
 class TestPromptInjectionBoundaries:
@@ -66,45 +67,6 @@ class TestSecretRedactionE2E:
         for f in logs_dir.rglob("*.jsonl"):
             text = f.read_text()
             assert "sk-secret-value-123" not in text
-
-
-class TestApiAuthExternalBinding:
-    def test_external_bind_requires_token(self, monkeypatch):
-        from fastapi.testclient import TestClient
-        from research_engine.api.app import create_app
-        from research_engine.services.context import ServiceContext
-        import tempfile
-        cfg = __import__("research_engine.core.config",
-                         fromlist=["AppConfig"]).AppConfig.load()
-        cfg.storage.data_dir = tempfile.mkdtemp()
-        cfg.platform.api.host = "0.0.0.0"       # external binding
-        cfg.platform.api.auth_token = ""         # ...without token: refused at serve()
-        with pytest.raises(SystemExit):
-            # CLI guard raises before uvicorn starts
-            from research_engine.cli.main import cmd_serve
-            ns = type("A", (), {"host": "0.0.0.0", "port": None})()
-            cmd_serve(ns)
-
-    def test_token_mismatch_rejected(self, platform_ctx, monkeypatch):
-        from fastapi.testclient import TestClient
-        from research_engine.api.app import create_app
-        platform_ctx.cfg.platform.api.host = "0.0.0.0"
-        platform_ctx.cfg.platform.api.auth_token = "correct-token"
-        client = TestClient(create_app(platform_ctx))
-
-        class _Req:
-            headers = {}
-        dep = None
-        from research_engine.api.app import make_auth_dependency
-        holder = {"ctx": platform_ctx}
-        dep = make_auth_dependency(holder)
-
-        class FakeRequest:
-            def __init__(self, tok):
-                self.headers = {"X-API-Token": tok}
-        with pytest.raises(Exception):
-            dep(FakeRequest("wrong-token"))
-        assert dep(FakeRequest("correct-token")) == "token"
 
 
 from pathlib import Path  # noqa: E402
