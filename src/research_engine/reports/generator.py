@@ -10,12 +10,74 @@ import logging
 from datetime import datetime, timezone
 
 from research_engine.core.config import AppConfig
+from research_engine.models.research import (RESULTS_COUNT_DISTINCT_URLS,
+                                             RESULTS_COUNT_LEGACY_HITS)
+from research_engine.models.review import content_hash_for
 from research_engine.providers.llm.base import LLMProvider
 from research_engine.reports.synthesis import Synthesizer, build_findings_context, deterministic_findings
 from research_engine.storage.repositories import Repositories
+from research_engine.storage.review_repos import ReviewDecisionRepo
 from research_engine.storage.workspace import Workspace
 
 log = logging.getLogger(__name__)
+
+# The MEANING of `SearchQuery.results_count`, as the reader sees it.
+_COUNT_BASIS = {
+    RESULTS_COUNT_LEGACY_HITS: "legacy hits",
+    RESULTS_COUNT_DISTINCT_URLS: "distinct urls",
+}
+
+
+def _count_basis(q) -> str:
+    """Which meaning the row's `results_count` carries.
+
+    Decision: the report states the basis NEXT to the number.
+    Why: `results_count` changed meaning - it used to count raw hits and
+    now counts distinct canonical URLs. The number alone cannot tell a
+    reader which of the two it is, and the two differ by roughly a factor
+    of two on a multi-leg route, so a legacy row would be read as a
+    bigger result than the engine actually found. The row carries the
+    version (`results_count_schema_version`); nobody read it, so the
+    report has to say it.
+    Constraint: an UNKNOWN version is rendered as unknown, never guessed.
+    """
+    version = getattr(q, "results_count_schema_version", RESULTS_COUNT_LEGACY_HITS)
+    return _COUNT_BASIS.get(version, f"unknown (v{version})")
+
+
+def _cell(text: str) -> str:
+    """Make a value safe for a markdown table cell."""
+    return (text or "").replace("|", "/").replace("\n", " ").strip()
+
+
+def _leg_summary(q) -> str:
+    """One cell: the per-leg outcomes of a query, and the legs it refused.
+
+    Decision: the legs are rendered as `leg:status` pairs in ONE column.
+    Why: the point of the leg audit trail is that a leg which resolved
+    to nothing (unconfigured) or failed is visible to the READER of the
+    report, not only to someone reading the raw JSON of the `queries`
+    table. One column per leg would need a column per possible leg name,
+    which is unbounded, so the pairs share a cell.
+    Constraint: the cell is a summary. The full outcome - including the
+    provider error text - stays on the query row. This is a READ-ONLY
+    rendering (INV-004): nothing here writes state.
+    """
+    parts = []
+    for outcome in (getattr(q, "leg_outcomes", None) or []):
+        leg = outcome.get("leg", "?")
+        status = outcome.get("status", "?")
+        if status == "hits":
+            parts.append(f"{leg}:hits({outcome.get('hits', 0)})")
+        elif status == "failed":
+            err = _cell(str(outcome.get("error") or ""))[:40]
+            parts.append(f"{leg}:failed({err})" if err else f"{leg}:failed")
+        else:
+            parts.append(f"{leg}:{status}")
+    dropped = list(getattr(q, "dropped_legs", None) or [])
+    if dropped:
+        parts.append("dropped:" + ",".join(_cell(d) for d in dropped))
+    return "; ".join(parts) if parts else "-"
 
 
 class ReportGenerator:
@@ -26,6 +88,50 @@ class ReportGenerator:
         self.ws = ws
         self.provider = provider
         self.synth = Synthesizer(provider)
+
+    # ------------------------------------------------------------------ review overlay (C16)
+    def _review_decision_repo(self) -> ReviewDecisionRepo:
+        if not hasattr(self, "_review_repo"):
+            self._review_repo = ReviewDecisionRepo(self.repos.db)
+        return self._review_repo
+
+    def _rejected_claim_ids(self, project_id: str) -> set[str]:
+        """Claim ids rejected by a non-stale review decision (C16).
+
+        Stale decisions (content_hash no longer matches the target's current
+        content) are surfaced but never applied, so they do not exclude a
+        claim.
+        """
+        rejected: set[str] = set()
+        for d in self._review_decision_repo().all(project_id):
+            if d.target_kind != "claim" or d.verdict != "REJECTED":
+                continue
+            target = self.repos.claims.get(d.target_id)
+            if target is None:
+                continue
+            if d.content_hash == content_hash_for("claim",
+                                                  claim_text=target.text):
+                rejected.add(d.target_id)
+        return rejected
+
+    def _exclude_rejected_claims(self, project_id: str,
+                                 claims: list) -> tuple[list, set[str]]:
+        """Filter rejected claims out of a bound claims list (C16)."""
+        rejected = self._rejected_claim_ids(project_id)
+        return [c for c in claims if c.id not in rejected], rejected
+
+    def _append_rejected_marking(self, lines: list[str], project_id: str,
+                                 rejected: set[str]) -> None:
+        """Mark rejected claims in the report output (C16)."""
+        if not rejected:
+            return
+        lines.append("\n## Review decisions — rejected claims excluded from findings")
+        claim_by_id = {c.id: c for c in self.repos.claims.all(project_id)}
+        for cid in sorted(rejected):
+            c = claim_by_id.get(cid)
+            if c is not None:
+                lines.append(f"- `{cid}`: human-rejected — {c.text[:140]}")
+        lines.append("")
 
     def generate_all(self, project) -> list[str]:
         written = []
@@ -155,6 +261,11 @@ class ReportGenerator:
         lines.append("")
         branches = sorted(plan.branches, key=lambda b: -b.importance)
         claims = self.repos.claims.all(project.id)
+        # Decision: human-rejected claims are excluded from findings (C16).
+        # Why: a claim the analyst rejected must not steer the research plan
+        # or inflate the evidence count; review decisions are an overlay that
+        # filters at the seam, never rewriting primary state (INV-004).
+        claims, rejected_ids = self._exclude_rejected_claims(project.id, claims)
         evidence = {e.id: e for e in self.repos.evidence.all(project.id)}
         for b in branches:
             n_ev = len([e for e in evidence.values()
@@ -166,15 +277,31 @@ class ReportGenerator:
             lines.append(f"- required evidence: {b.required_evidence or '(unspecified)'}")
             lines.append(f"- source preferences: {', '.join(b.source_preferences) or 'default routing'}")
             lines.append("")
+        # Decision: the query table carries the COUNT BASIS and the per-LEG
+        # outcomes.
+        # Why: `results_count` changed meaning (raw hits -> distinct
+        # canonical URLs) and the leg outcomes are the only record that a
+        # leg resolved to nothing. A reader who sees the number and the
+        # query alone cannot tell either fact, so the report - the
+        # artefact a human actually reads - carried neither.
+        # Constraint: the legs share ONE column (`leg:status` pairs). A
+        # column per leg would need a column per possible leg name, which
+        # is unbounded, and the table is already wide. The full outcome
+        # (including the provider error) stays on the query row. This is
+        # a READ-ONLY rendering (INV-004).
         lines += ["## Queries Executed", "",
-                  "| query | kind | results | useful | gain | reason |", "|---|---|---|---|---|---|"]
+                  "| query | kind | results | count basis | legs | useful | gain | reason |",
+                  "|---|---|---|---|---|---|---|---|"]
         for q in sorted(queries, key=lambda x: -x.expected_information_gain)[:60]:
-            lines.append(f"| {q.text[:80]} | {q.kind} | {q.results_count} | {q.useful_results} "
-                         f"| {q.expected_information_gain:.2f} | {q.reason[:60]} |")
+            lines.append(f"| {_cell(q.text[:80])} | {q.kind} | {q.results_count} "
+                         f"| {_count_basis(q)} | {_cell(_leg_summary(q))} "
+                         f"| {q.useful_results} | {q.expected_information_gain:.2f} "
+                         f"| {_cell(q.reason[:60])} |")
         return str(self._write("research_plan.md", "\n".join(lines)))
 
     def write_info(self, project) -> str:
         claims = self.repos.claims.all(project.id)
+        claims, rejected_ids = self._exclude_rejected_claims(project.id, claims)
         evidence = {e.id: e for e in self.repos.evidence.all(project.id)}
         contradictions = self.repos.contradictions.all(project.id)
         gaps = [g for g in self.repos.gaps.all(project.id) if not g.resolved]
@@ -274,6 +401,7 @@ class ReportGenerator:
 
         lines.append("\n## Full Source List\n")
         lines.append("See `sources.md`.")
+        self._append_rejected_marking(lines, project.id, rejected_ids)
         return str(self._write("info.md", "\n".join(lines)))
 
     def write_sources(self, project) -> str:
@@ -332,6 +460,7 @@ class ReportGenerator:
 
     def write_literature_review(self, project) -> str:
         claims = self.repos.claims.all(project.id)
+        claims, _rejected = self._exclude_rejected_claims(project.id, claims)
         evidence = {e.id: e for e in self.repos.evidence.all(project.id)}
         papers = [s for s in self.repos.sources.all(project.id, "status='PARSED'")
                   if s.source_type.value == "research_paper"]
@@ -408,6 +537,7 @@ class ReportGenerator:
         except Exception as exc:
             log.warning("specialist startup report failed; legacy fallback: %s", exc)
         claims = self.repos.claims.all(project.id)
+        claims, _rejected = self._exclude_rejected_claims(project.id, claims)
         evidence = {e.id: e for e in self.repos.evidence.all(project.id)}
         ctx = _base_ctx(self.repos, project)
         ctx["findings_input"] = build_findings_context(claims, evidence)

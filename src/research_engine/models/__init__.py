@@ -19,6 +19,7 @@ from research_engine.models.research import (
     SearchQuery,
     Source,
 )
+from research_engine.models.review import ReviewDecision
 
 __all__ = [
     "Entity", "Gap", "Contradiction", "Document", "DocumentChunk",
@@ -26,4 +27,5 @@ __all__ = [
     "Assumption", "BudgetUsage", "ResearchMetrics", "ResearchProblem",
     "ResearchProject", "ResearchQuestion", "ResearchReport",
     "ResearchBranch", "ResearchPlan", "SearchResult", "SearchQuery", "Source",
+    "ReviewDecision",
 ]

@@ -88,9 +88,26 @@ def json_loads(s: str) -> dict:
 class WatchRunner:
     """Executes one watcher tick. Registered as WATCHER_TICK runner."""
 
-    def __init__(self, ctx, bus: EventBus | None = None):
+    def __init__(self, ctx, bus: EventBus | None = None, registry=None):
         self.ctx = ctx
         self.bus = bus or EventBus()
+        # Decision: the provider registry is injectable.
+        # Why: the watcher built its own registry internally, so the only way
+        # to exercise its search legs was to monkeypatch the whole `_search`
+        # method - which is why the dead academic leg was never caught.
+        # Constraint: None means "build the default registry from config".
+        self.registry = registry
+        # Decision: an unconfigured provider and a provider that FAILED are
+        # recorded in SEPARATE lists.
+        # Why: the two were told apart by substring-matching the message
+        # ("not configured"), so a real outage whose message happened to
+        # contain that phrase (e.g. "semantic scholar: API key not
+        # configured") was silently downgraded from DEGRADED to OK. The code
+        # already knows which is which at the append site; re-deriving it
+        # from the text is what created the bug.
+        # Constraint: the tick status is derived from `_failures` ONLY.
+        self._unconfigured: list[str] = []
+        self._failures: list[str] = []
 
     def tick(self, watcher: WatcherModel, control_fn=None) -> dict:
         if control_fn and control_fn(watcher.project_id) == "CANCEL":
@@ -109,8 +126,13 @@ class WatchRunner:
 
         # notifications (spec #21/#133)
         for item in diff["new"]:
+            # Decision: a newly discovered URL publishes "SourceUpdated".
+            # Why: the old code published "EvidenceCreated" for a URL that
+            # had not been fetched or extracted yet - no evidence existed.
+            # "SourceUpdated" is the existing event type for a source-side
+            # change; a new event type would need registering in EVENT_TYPES.
             self.bus.publish(DomainEvent(
-                "SourceUpdated" if False else "EvidenceCreated",
+                "SourceUpdated",
                 project_id=watcher.project_id,
                 payload={"kind": "new_source", "url": item["url"],
                          "title": item.get("title", "")[:120]}))
@@ -129,10 +151,25 @@ class WatchRunner:
             w.consecutive_empty_runs = 0
             w.last_change_at = w.last_run_at
         self.ctx.platform_db.save_watcher(w)
-        summary = {"status": "OK", "new": len(diff["new"]),
+        # Decision: the summary reports the provider failures that happened.
+        # Why: a total provider outage produced {"status": "OK", "new": 0},
+        # which is indistinguishable from "the watch found nothing new" - the
+        # exact failure-vs-empty confusion INV-012 exists to prevent.
+        # Constraint: an unconfigured provider is not a failure; it is
+        # reported separately, so an offline install is not reported as an
+        # outage. The status comes from the recorded failures, never from the
+        # message text.
+        failures = list(self._failures)
+        unconfigured = list(self._unconfigured)
+        summary = {"status": "DEGRADED" if failures else "OK",
+                   "new": len(diff["new"]),
                    "changed": len(diff["changed"]), "unchanged":
                    len(diff["unchanged"]), "extracted_evidence": extracted,
                    "empty_streak": w.consecutive_empty_runs}
+        if failures:
+            summary["failures"] = failures[:10]
+        if unconfigured:
+            summary["unconfigured"] = unconfigured[:10]
         if interesting or extracted:
             self.bus.publish(DomainEvent(
                 "WatcherTriggered", project_id=w.project_id,
@@ -141,33 +178,56 @@ class WatchRunner:
 
     # -------------------------------------------------------------- pieces
     def _search(self, query: str, scope: list[str]) -> list[dict]:
-        """Query academic+web providers per scope; degrade gracefully."""
+        """Query academic+web providers per scope; degrade gracefully.
+
+        Decision: both legs go through the shared ProviderRegistry instead of
+        constructing a provider directly.
+        Why: constructing DuckDuckGoProvider here bypassed
+        `cfg.search.web_provider`, so a watcher fired on an explicitly
+        offline install still called out to the network. The academic leg also
+        called `reg.academic`, an attribute the registry does not have, so it
+        raised AttributeError and was swallowed - the academic leg has never
+        actually run.
+        Constraint: a provider failure is recorded, never silently flattened
+        into "no new sources" (INV-012).
+        """
         from research_engine.core.orchestrator import build_default_registry
-        reg = build_default_registry(self.ctx.cfg)
+        reg = self.registry if self.registry is not None \
+            else build_default_registry(self.ctx.cfg)
         hits: list[dict] = []
+        failures: list[str] = []
+        unconfigured: list[str] = []
         wanted_academic = [s for s in scope if s != "web"] or \
             self.ctx.cfg.search.academic_providers
         want_web = not scope or "web" in scope
-        timeout = self.ctx.cfg.network.timeout_seconds
+
         if want_web:
-            try:
-                from research_engine.providers.search.duckduckgo import \
-                    DuckDuckGoProvider
-                for r in DuckDuckGoProvider(timeout=timeout).search(query)[:5]:
-                    hits.append({"url": r.url, "title": r.title,
-                                 "snippet": r.snippet})
-            except Exception:
-                pass
+            prov = reg.get_search("web")
+            if prov is None:
+                # Not configured (web_provider: none) - not a failure.
+                unconfigured.append("web")
+            else:
+                try:
+                    for r in prov.search(query, max_results=5):
+                        hits.append({"url": r.url, "title": r.title,
+                                     "snippet": r.snippet})
+                except Exception as exc:
+                    failures.append(f"web: {type(exc).__name__}: {exc}")
+
         for name in wanted_academic[:3]:
+            prov = reg.get_any(name)
+            if prov is None:
+                unconfigured.append(name)
+                continue
             try:
-                prov = reg.academic.get(name)
-                if prov is None:
-                    continue
                 for r in prov.search(query, max_results=5):
                     hits.append({"url": r.url, "title": r.title,
                                  "snippet": r.snippet})
-            except Exception:
-                continue   # provider failure never kills the watcher
+            except Exception as exc:
+                failures.append(f"{name}: {type(exc).__name__}: {exc}")
+
+        self._failures = failures
+        self._unconfigured = unconfigured
         seen: set[str] = set()
         uniq = []
         for h in hits:

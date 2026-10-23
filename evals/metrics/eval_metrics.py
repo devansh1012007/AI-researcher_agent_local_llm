@@ -90,7 +90,19 @@ def score_project(repos: Repositories, project_id: str,
 
     claims = repos.claims.all(project_id)
     if claims:
-        s.citation_coverage = (len([c for c in claims if c.supported_by]) / len(claims))
+        from research_engine.pipeline.evidence import verify_quote
+        chunks = {c.id: c.text for c in repos.chunks.all(project_id)}
+        covered = 0
+        for c in claims:
+            for eid in c.supported_by:
+                ev = repos.evidence.get(eid)
+                if ev is None or ev.status.value == "REJECTED":
+                    continue
+                ct = chunks.get(ev.chunk_id)
+                if ct is not None and verify_quote(ev.quote, ct)[0]:
+                    covered += 1
+                    break
+        s.citation_coverage = covered / len(claims)
 
     if expected_subquestions:
         covered = 0

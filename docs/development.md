@@ -5,7 +5,7 @@
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
-pytest            # 40 tests, fully offline (fake search/HTTP/LLM), ~3s
+pytest            # 378 tests, fully offline (fake search/HTTP/LLM), ~2 min
 ```
 
 ## Test layout

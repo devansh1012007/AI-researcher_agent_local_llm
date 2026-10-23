@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 
 from research_engine.core.budget import Budget
 from research_engine.core.config import AppConfig
+from research_engine.core.http_policy import build_egress_policy
 from research_engine.core.state_machine import StateMachine
 from research_engine.models.enums import (
     ProjectState, ReviewGate, StopReason, TaskStatus, TaskType,
@@ -648,6 +649,13 @@ def _ts() -> str:
 
 def build_default_registry(cfg: AppConfig) -> ProviderRegistry:
     reg = ProviderRegistry()
+    policy = build_egress_policy(cfg)
+    # Under LOCAL_ONLY no network provider is constructed - the policy
+    # refuses every non-loopback host at construction time. This is the
+    # single gating point: providers are never built here if egress is
+    # denied, so they can never silently call out.
+    if policy.strict:
+        return reg
     from research_engine.providers.academic.arxiv import ArxivProvider
     from research_engine.providers.academic.crossref import CrossrefProvider
     from research_engine.providers.academic.openalex import OpenAlexProvider

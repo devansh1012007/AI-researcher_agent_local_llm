@@ -155,6 +155,20 @@ def build_tools() -> list[dict[str, Any]]:
                           "metrics": {"type": "object"},
                           "raw_notes": {"type": "string"}},
            "required": ["project_id", "experiment_id"]}),
+        t("record_review_decision",
+          "Record an analyst review decision on a claim, contradiction or "
+          "validation plan (overlay; never rewrites machine state)",
+          Permission.WRITE,
+          {"type": "object",
+           "properties": {"project_id": {"type": "string"},
+                          "target_kind": {"type": "string",
+                                          "enum": ["claim", "contradiction",
+                                                   "validation_plan"]},
+                          "target_id": {"type": "string"},
+                          "verdict": {"type": "string"},
+                          "note": {"type": "string"},
+                          "reviewer_label": {"type": "string"}},
+           "required": ["project_id", "target_kind", "target_id", "verdict"]}),
         # --- startup specialist tools (spec #78) ---
         t("startup_research",
           "Full startup pipeline: discovery -> hypotheses -> validation -> decision",
@@ -289,6 +303,11 @@ class McpServer:
     def experiments(self):
         from research_engine.services.knowledge_service import ExperimentService
         return ExperimentService(self._ctx())
+
+    @property
+    def review(self):
+        from research_engine.services.review_service import ReviewService
+        return ReviewService(self._ctx())
 
     @property
     def knowledge(self):
@@ -462,6 +481,14 @@ class McpServer:
             observations=a.get("observations"),
             metrics=a.get("metrics"), raw_notes=a.get("raw_notes", ""))
         return outcome
+
+    def _tool_record_review_decision(self, a: dict) -> dict:
+        """Record an analyst review decision; loopback is unauthenticated
+        (D-3) so actor_kind is unverified_label."""
+        return self.review.record_decision(
+            a["project_id"], a["target_kind"], a["target_id"], a["verdict"],
+            note=a.get("note", ""), reviewer_label=a.get("reviewer_label", ""),
+            actor_kind="unverified_label")
 
     # ------------------------------------------------ startup tools (spec #78)
     def _tool_startup_research(self, a: dict) -> dict:

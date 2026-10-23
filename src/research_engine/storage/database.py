@@ -5,6 +5,7 @@ import json
 import logging
 import sqlite3
 import threading
+from datetime import datetime, timezone
 from pathlib import Path
 
 log = logging.getLogger(__name__)
@@ -306,6 +307,16 @@ CREATE TABLE IF NOT EXISTS opportunity_decisions (
     decision TEXT DEFAULT '',
     data TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS review_decisions (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    target_kind TEXT,
+    target_id TEXT,
+    verdict TEXT,
+    actor_kind TEXT,
+    content_hash TEXT,
+    data TEXT NOT NULL
+);
 """
 
 # INVARIANT-003: canonical entity identity is enforced by the database.
@@ -322,6 +333,42 @@ _STARTUP_UNIQUE_INDEXES = [
     "CREATE UNIQUE INDEX IF NOT EXISTS ux_channels_name ON distribution_channels(project_id, LOWER(json_extract(data,'$.name')))",
     "CREATE UNIQUE INDEX IF NOT EXISTS ux_techshift_fp ON tech_shifts(project_id, LOWER(SUBSTR(json_extract(data,'$.description'),1,80)))",
 ]
+
+
+def parse_payload_timestamp(value) -> datetime | None:
+    """Parse a persisted payload ``created_at`` into an aware UTC datetime.
+
+    This is the CANONICAL parser for the ``created_at`` convention of the
+    stored JSON payloads (the ``data`` blob written by this module): an
+    ISO-8601 UTC string such as ``"2026-10-22T09:05:24.411110Z"``. Returns
+    ``None`` when the value is absent or unusable - the caller then treats
+    the row's age as UNKNOWN.
+
+    Decision: the parser lives with the payload format, not with one of its
+    readers.
+    Why: the convention belongs to the ``data`` blob this module writes, so
+    every reader (the graph store, the duplicate repair) must share ONE
+    implementation. A parser imported from a consumer module makes the
+    storage layer depend on its callers - and two parsers would drift.
+
+    Why parsing and not string comparison: pydantic omits the fractional
+    part when the microseconds are exactly 0, so the TEXT
+    ``'2026-01-01T00:00:00Z'`` is GREATER than
+    ``'2026-01-01T00:00:00.500000Z'`` ('Z' > '.') although it is the older
+    instant. Only a parsed datetime orders chronologically.
+    """
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.strip())
+    except ValueError:
+        # A malformed stamp is NOT a valid age. It is reported as unknown
+        # (the caller sorts it last and counts it) instead of being guessed.
+        return None
+    if parsed.tzinfo is None:
+        # a naive stamp is read as UTC: every persisted stamp is UTC
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
 
 
 class Database:

@@ -12,8 +12,37 @@ import json
 import re
 import threading
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 
-from research_engine.storage.database import Database
+from research_engine.storage.database import Database, parse_payload_timestamp
+
+
+# C22 audit - id text is NOT a creation order any more. The entity id
+# generator mints ULIDs, rows written before that change keep their old
+# `<prefix>_%06d` ids (which sort AFTER a ULID once the counter passes
+# 100000), the prefix differs per entity type (`ent_*` vs `pap_*`, so a
+# mixed population groups by prefix and never by time) and a relationship id
+# is a CONTENT hash of (source, target, type). The consumers were audited:
+#   * `entities()` -> `cli/main.py` display (determinism is enough) and
+#     `specialists/startup/cli_glue.py:18`, which uses only `len()` and is
+#     therefore order-independent.
+#   * `specialists/startup/competitors.py::build_profiles` merges the
+#     `company` and the `competitor` lists. Within ONE type there is no age
+#     contest at all: `upsert_entity` resolves a single row per
+#     (project, type, name_key). ACROSS the two types the winner is the
+#     LIST CONCATENATION - the `competitor` row is processed last and
+#     overwrites the profile fields - not the age.
+#   * `relationships()` -> `find_relationship` (unique match), `evidence_density`
+#     (no callers) and `neighbors` (one test) need determinism only.
+# Hence: `entities()` orders by the payload `created_at` (the only creation
+# order the rows carry), `relationships()` keeps a deterministic content-hash
+# order, and neither claims oldest-first semantics it cannot honour.
+
+
+def _utc_now_iso() -> str:
+    """UTC ISO-8601 stamp in the same shape pydantic writes for
+    ``Entity.created_at`` (trailing ``Z``, fractional part omitted when 0)."""
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 @dataclass
@@ -57,6 +86,18 @@ def normalize_name(name: str) -> str:
     tokens = re.findall(r"[a-z0-9]+", (name or "").lower())
     stopwords = {"inc", "llc", "ltd", "gmbh", "corp", "corporation", "the", "co"}
     return " ".join(sorted(t for t in tokens if t not in stopwords))
+
+
+def _entity_order_key(entity: GraphEntity) -> tuple:
+    """Creation-order key for `GraphStore.entities()`.
+
+    Known timestamps first (oldest first), rows with an unknown age last,
+    ``id`` breaks every tie so the order is total and deterministic.
+    """
+    stamp = parse_payload_timestamp(entity.created_at)
+    if stamp is None:
+        return (1, entity.id)
+    return (0, stamp, entity.id)
 
 
 class GraphStore:
@@ -114,10 +155,35 @@ class GraphStore:
             e.name_key = normalize_name(e.name)
         # entity resolution: same project+type+name_key -> same node
         row = self._conn().execute(
-            "SELECT id FROM graph_entities WHERE project_id=? AND type=? AND name_key=?",
+            "SELECT id, data FROM graph_entities "
+            "WHERE project_id=? AND type=? AND name_key=?",
             (e.project_id, e.type, e.name_key)).fetchone()
+        existing_data = None
         if row is not None:
             e.id = row["id"]
+            existing_data = row["data"]
+        else:
+            # the caller may address an existing entity by id
+            prior = self._conn().execute(
+                "SELECT data FROM graph_entities WHERE id=?", (e.id,)).fetchone()
+            existing_data = prior["data"] if prior is not None else None
+        # Decision: the age of an existing row is decided ONCE, when the row
+        #   is first written, and is never rewritten afterwards - not even
+        #   when that age is UNKNOWN.
+        # Why: a row written before the payload carried a timestamp has an
+        #   empty stamp. Back-filling it with the time of the next upsert
+        #   would silently turn an UNKNOWN age into "newest", which is the
+        #   opposite of the truth: that row is older than every row written
+        #   after the change. The consumers that pick a REPRESENTATIVE row
+        #   (competitor profiles, pain clustering) would then keep the wrong
+        #   one, and `entities()` would stop sorting oldest-first.
+        # Constraint: the stored stamp wins over the incoming one, so the
+        #   creation time of an existing entity is immutable. A NEW row is
+        #   stamped now - there is no older age to preserve.
+        if existing_data is not None:
+            e.created_at = json.loads(existing_data).get("created_at") or ""
+        elif not e.created_at:
+            e.created_at = _utc_now_iso()
         payload = json.dumps(e.to_dict(), default=str)
         with self._lock:
             with self._conn() as c:
@@ -139,13 +205,29 @@ class GraphStore:
         return GraphEntity(**json.loads(row["data"])) if row else None
 
     def entities(self, project_id: str, type_: str | None = None) -> list[GraphEntity]:
+        """Entities of a project, OLDEST FIRST by the payload ``created_at``.
+
+        Decision: creation order comes from the row payload's
+        ``created_at``, never from the id text.
+        Why: the id text is not a creation order (see the C22 audit above):
+        legacy rows keep their old counter ids and the prefix differs per
+        type. The payload stamp is the only creation order the rows carry,
+        so it is the order a reader gets.
+        Constraint: rows written before the payload carried a timestamp
+        have an empty ``created_at``. Their age is UNKNOWN, so they sort
+        last and are tie-broken by id; the order is total and deterministic.
+        An UNKNOWN age is never back-filled by a later upsert (see
+        `upsert_entity`), so the promise holds for legacy rows too.
+        """
         sql = "SELECT data FROM graph_entities WHERE project_id=?"
         params: tuple = (project_id,)
         if type_:
             sql += " AND type=?"
             params += (type_,)
-        return [GraphEntity(**json.loads(r["data"]))
-                for r in self._conn().execute(sql + " ORDER BY id", params).fetchall()]
+        ents = [GraphEntity(**json.loads(r["data"]))
+                for r in self._conn().execute(sql, params).fetchall()]
+        ents.sort(key=_entity_order_key)
+        return ents
 
     # -- relationships -------------------------------------------------------
     def add_relationship(self, r: Relationship) -> Relationship:
@@ -166,6 +248,17 @@ class GraphStore:
 
     def relationships(self, project_id: str, rel_type: str | None = None,
                       entity_id: str | None = None) -> list[Relationship]:
+        """Relationships of a project in a deterministic, stable order.
+
+        Decision: the order is the relationship id, which is a CONTENT hash
+        of (source, target, type) - NOT a creation order.
+        Why: a relationship row carries no timestamp, so creation order is
+        not representable; claiming one would be a fiction. Every consumer
+        needs determinism only (`find_relationship` matches a unique pair,
+        `evidence_density` counts, `neighbors` lists).
+        Constraint: do not read this order as "oldest first", and do not
+        add a timestamp field to `Relationship` to make it look like one.
+        """
         sql = "SELECT data FROM graph_relationships WHERE project_id=?"
         params: list = [project_id]
         if rel_type:

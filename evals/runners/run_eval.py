@@ -205,6 +205,7 @@ def main():
                                task.get("expected_subquestions"))
         scores.wall_clock_seconds = secs
         q = task.get("quality_expectations", {})
+        qg = task.get("quality_gates", {})
         failures = []
         if q.get("min_primary_ratio") and scores.primary_source_ratio < q["min_primary_ratio"]:
             failures.append("primary_ratio")
@@ -212,6 +213,21 @@ def main():
             failures.append("citation_coverage")
         if q.get("min_quote_correctness") and scores.quote_correctness < q["min_quote_correctness"]:
             failures.append("quote_correctness")
+        # Phase 4 quality_gates block (wired in per C21)
+        if qg.get("min_primary_ratio") and scores.primary_source_ratio < qg["min_primary_ratio"]:
+            failures.append("primary_ratio")
+        if qg.get("min_citation_coverage") and scores.citation_coverage < qg["min_citation_coverage"]:
+            failures.append("citation_coverage")
+        if qg.get("quote_correctness_min") and scores.quote_correctness < qg["quote_correctness_min"]:
+            failures.append("quote_correctness")
+        if qg.get("duplicate_max") is not None and scores.duplicate_rate > qg["duplicate_max"]:
+            failures.append("duplicate_rate")
+        if qg.get("min_evidence") is not None and scores.rejected_evidence_ratio < qg["min_evidence"]:
+            failures.append("min_evidence")
+        if qg.get("min_sources") is not None and scores.sources_accepted < qg["min_sources"]:
+            failures.append("min_sources")
+        if qg.get("subq_coverage_min") is not None and scores.subquestion_coverage < qg["subq_coverage_min"]:
+            failures.append("subq_coverage")
         if task.get("expect_gaps") and not scores.gaps_discovered:
             failures.append("expected_gaps_but_none_found")
         # Phase 4 lifecycle gate: project must reach a clean terminal state

@@ -52,7 +52,6 @@ class NetworkConfig(BaseModel):
     user_agent: str = (
         "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36 GAR-ResearchBot/0.1"
     )
-    respect_robots: bool = True
 
 
 class ResourceConfig(BaseModel):
@@ -164,11 +163,33 @@ class PlatformConfig(BaseModel):
     experiments: ExperimentsConfig = Field(default_factory=ExperimentsConfig)
 
     def effective_environment(self) -> str:
-        """Resolve LOCAL_ONLY/HYBRID/ONLINE from mode + privacy switches."""
+        """Resolve LOCAL_ONLY/HYBRID/ONLINE from mode + privacy switches.
+
+        Input vocabulary: ``offline`` | ``local`` | ``online``.
+        Mapping: ``offline`` -> LOCAL_ONLY (zero non-loopback egress),
+        ``local`` -> HYBRID (loopback LLM + network retrieval, today's
+        behaviour with a truthful label), ``online`` -> ONLINE.
+        ``privacy_mode: true`` forces LOCAL_ONLY. An unknown mode resolves
+        to LOCAL_ONLY and logs a loud error - fail closed.
+        """
+        import logging
+
+        log = logging.getLogger(__name__)
         if self.security.privacy_mode:
             return "LOCAL_ONLY"
-        return {"local": "LOCAL_ONLY", "hybrid": "HYBRID",
-                "online": "ONLINE"}.get(self.mode.lower(), "HYBRID")
+        resolved = {
+            "offline": "LOCAL_ONLY",
+            "local": "HYBRID",
+            "online": "ONLINE",
+        }.get(self.mode.lower())
+        if resolved is None:
+            log.error(
+                "unknown platform.mode %r: resolving to LOCAL_ONLY (fail closed). "
+                "Valid modes: offline, local, online",
+                self.mode,
+            )
+            return "LOCAL_ONLY"
+        return resolved
 
     def apply_profile(self) -> None:
         """Resource profiles (spec #152): named presets that lower limits."""

@@ -18,6 +18,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from research_engine.core.config import is_loopback_host
+from research_engine.core.http_policy import build_egress_policy
 from research_engine.platform.errors import ClassifiedError
 from research_engine.services.context import ServiceContext
 from research_engine.services.research_service import (
@@ -27,6 +28,7 @@ from research_engine.services.research_service import (
 from research_engine.services.knowledge_service import (
     EvidenceService, ExperimentService, HypothesisService, ReportService,
 )
+from research_engine.services.review_service import ReviewService
 
 
 # ------------------------------------------------------------------- schemas
@@ -55,6 +57,14 @@ class StartupModeReq(BaseModel):
     project_id: str = ""
     opportunity_id: str = ""
     segment: str = ""
+
+
+class ReviewDecisionReq(BaseModel):
+    target_kind: str
+    target_id: str
+    verdict: str
+    note: str = ""
+    reviewer_label: str = ""
 
 
 # ---------------------------------------------------------------- app factory
@@ -309,6 +319,15 @@ def create_app(ctx: ServiceContext | None = None) -> FastAPI:
             project_id, exp_id, observations=body.get("observations"),
             metrics=body.get("metrics"), raw_notes=body.get("raw_notes", "")))
 
+    @app.post("/projects/{project_id}/review/decisions", status_code=201)
+    def record_review_decision(project_id: str, body: ReviewDecisionReq,
+                               _: str = Depends(auth)) -> dict:
+        """Record an analyst review decision (overlay; loopback = unverified_label)."""
+        return _guard(lambda: ReviewService(get_ctx()).record_decision(
+            project_id, body.target_kind, body.target_id, body.verdict,
+            note=body.note, reviewer_label=body.reviewer_label,
+            actor_kind="unverified_label"))
+
     # ------------------------------------------------ startup specialist (#77)
     def _svc():
         # BUG-08 fix: resolve through get_ctx() so default create_app(None)
@@ -492,6 +511,20 @@ def health_report(ctx: ServiceContext) -> dict:
         "threads": len(getattr(sched, "_threads", [])),
     } if sched and getattr(sched, "_threads", []) else
         {"level": "degraded", "note": "scheduler not started"})
+
+    # egress / providers: under LOCAL_ONLY no network provider may be built
+    policy = build_egress_policy(ctx.cfg)
+    env = ctx.cfg.platform.effective_environment()
+    providers = ctx.cfg.search.academic_providers + [cfg_web for cfg_web in (cfg_web for cfg_web in [ctx.cfg.search.web_provider] if cfg_web != "none")]
+    checks["providers"] = {
+        "level": "healthy",
+        "environment": env,
+        "strict": policy.strict,
+        "note": "no network providers may be constructed" if policy.strict else "network providers allowed",
+    }
+    if policy.strict and (providers or ctx.cfg.search.web_provider != "none"):
+        checks["providers"]["level"] = "degraded"
+        checks["providers"]["note"] = "LOCAL_ONLY but providers are configured - they will not be constructed"
 
     levels = [c["level"] for c in checks.values()]
     overall = ("unavailable" if "unavailable" in levels else

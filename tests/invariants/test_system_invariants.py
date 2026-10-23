@@ -60,7 +60,7 @@ def _seeded(tmp_path):
 TABLES = ["startup_markets", "competitor_profiles", "pricing_plans",
           "startup_personas", "alternatives", "jtbd",
           "opportunity_decisions", "opportunities", "evidence", "claims",
-          "hypotheses", "experiments", "assumptions2"]
+          "hypotheses", "experiments", "assumptions2", "review_decisions"]
 
 
 def _snap(db_path):

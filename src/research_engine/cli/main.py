@@ -5,6 +5,7 @@ Commands: new, run, status, pause, resume, inspect, report, gaps, sources, queri
 from __future__ import annotations
 
 import argparse
+import getpass
 import json
 import sys
 from pathlib import Path
@@ -638,6 +639,70 @@ def _ctx4(args=None):
     return get_context()
 
 
+def cmd_review_decide(args):
+    """Record an analyst review decision; CLI captures the OS user."""
+    from research_engine.services.review_service import ReviewService
+    from research_engine.models.review import IllegalReviewTransition
+    from research_engine.services.research_service import NotFoundError
+    svc = ReviewService(_ctx4(args))
+    try:
+        out = svc.record_decision(
+            args.project_id, args.target_kind, args.target_id, args.verdict,
+            note=args.note,
+            reviewer_label=args.reviewer_label or getpass.getuser(),
+            actor_kind="os_user")
+    except (IllegalReviewTransition, NotFoundError) as exc:
+        console.print(f"[red]{exc}[/red]")
+        return
+    console.print(
+        f"review decision recorded: {out.get('id')} -> {out.get('verdict')}")
+
+
+def cmd_review_list(args):
+    """List review decisions for a project (stale decisions surfaced)."""
+    from research_engine.services.review_service import ReviewService
+    svc = ReviewService(_ctx4(args))
+    decisions = svc.list_decisions(
+        args.project_id,
+        args.target_kind or None,
+        args.target_id or None,
+    )
+    if not decisions:
+        console.print("No review decisions.")
+        return
+    t = Table(title=f"Review decisions — {args.project_id}")
+    for col in ("id", "target_kind", "target_id", "verdict", "actor_kind",
+                "decided_at", "stale"):
+        t.add_column(col)
+    for d in decisions:
+        t.add_row(
+            d.get("id", ""), d.get("target_kind", ""), d.get("target_id", ""),
+            d.get("verdict", ""), d.get("actor_kind", ""),
+            str(d.get("decided_at", ""))[:16],
+            "stale" if d.get("is_stale") else "",
+        )
+    console.print(t)
+
+
+def cmd_review_revise(args):
+    """Request a revision of a validation plan (overlay decision only)."""
+    from research_engine.services.review_service import ReviewService
+    from research_engine.models.review import IllegalReviewTransition
+    from research_engine.services.research_service import NotFoundError
+    svc = ReviewService(_ctx4(args))
+    try:
+        out = svc.apply_validation_plan_revision(
+            args.project_id, args.validation_plan_id,
+            note=args.note,
+            reviewer_label=args.reviewer_label or getpass.getuser(),
+            actor_kind="os_user")
+    except (IllegalReviewTransition, NotFoundError) as exc:
+        console.print(f"[red]{exc}[/red]")
+        return
+    console.print(
+        f"review decision recorded: {out.get('id')} -> {out.get('verdict')}")
+
+
 # ---------------------------------------------------------------------------
 # Phase 5: startup specialist commands (spec #76)
 # ---------------------------------------------------------------------------
@@ -1087,6 +1152,7 @@ def cmd_doctor(args):
         extra = "" if check["level"] == "healthy" else \
             f" — {check.get('note') or check.get('detail') or ''}"
         console.print(f"  {name:<12} {icon[check['level']]}{extra}")
+    return 0 if report["status"] == "healthy" else 1
 
 
 def main(argv=None):
@@ -1238,6 +1304,32 @@ def main(argv=None):
     p.add_argument("--note", default="")
     p.set_defaults(fn=cmd_approve_experiment)
 
+    # --- Phase 4: analyst review (overlay) ---
+    p = sub.add_parser("review", help="analyst review decisions (append-only overlay)")
+    rsub = p.add_subparsers(dest="review_cmd", required=True)
+
+    q = rsub.add_parser("decide", help="record a review decision on a claim/contradiction/validation plan")
+    q.add_argument("project_id")
+    q.add_argument("target_kind", choices=["claim", "contradiction", "validation_plan"])
+    q.add_argument("target_id")
+    q.add_argument("verdict")
+    q.add_argument("--note", default="")
+    q.add_argument("--reviewer-label", default="")
+    q.set_defaults(fn=cmd_review_decide)
+
+    q = rsub.add_parser("list", help="list review decisions (stale decisions surfaced)")
+    q.add_argument("project_id")
+    q.add_argument("--target-kind", default="")
+    q.add_argument("--target-id", default="")
+    q.set_defaults(fn=cmd_review_list)
+
+    q = rsub.add_parser("revise", help="request a revision of a validation plan")
+    q.add_argument("project_id")
+    q.add_argument("validation_plan_id")
+    q.add_argument("--note", default="")
+    q.add_argument("--reviewer-label", default="")
+    q.set_defaults(fn=cmd_review_revise)
+
     p = sub.add_parser("add-result", help="ingest experiment results manually")
     p.add_argument("project_id")
     p.add_argument("experiment_id")
@@ -1381,7 +1473,9 @@ def main(argv=None):
     q.set_defaults(fn=cmd_startup_next)
 
     args = parser.parse_args(argv)
-    args.fn(args)
+    rc = args.fn(args)
+    if isinstance(rc, int) and rc != 0:
+        raise SystemExit(rc)
 
 
 if __name__ == "__main__":

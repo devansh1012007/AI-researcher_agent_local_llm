@@ -11,7 +11,8 @@ from pathlib import Path
 from research_engine.core.config import AppConfig
 from research_engine.core.ids import url_canonicalize
 from research_engine.models.enums import ContentStatus
-from research_engine.models.research import SearchQuery, SearchResult, Source
+from research_engine.models.research import (RESULTS_COUNT_DISTINCT_URLS,
+                                            SearchQuery, SearchResult, Source)
 from research_engine.pipeline.routing import ProviderRegistry, classify_source, route_for
 from research_engine.storage.cache import KVCache, cache_key
 from research_engine.storage.repositories import Repositories
@@ -38,12 +39,36 @@ class RetrievalWorker:
             for fut in as_completed(futures):
                 q = futures[fut]
                 try:
-                    hits, errors = fut.result()
+                    hits, errors, outcomes, dropped_legs = fut.result()
                 except Exception as exc:  # isolation: one query failure never kills the loop
                     log.warning("query %s failed: %s", q.id, exc)
                     hits, errors = [], [f"{type(exc).__name__}: {exc}"]
+                    outcomes, dropped_legs = [], []
                 q.executed = True
-                q.results_count = len(hits)
+                # Decision: results_count counts DISTINCT canonical http(s)
+                # URLs, not raw hits.
+                # Why: two legs can surface the same document (a paper on
+                # arxiv and the same paper on a preprint server), and a raw
+                # hit count overstates what was actually found. The distinct
+                # count is what a reader sees in the report.
+                # Constraint: a hit whose URL is not http(s) is NOT counted -
+                # `_register_result` skips exactly those hits, so they would
+                # never become a source. The count therefore matches the
+                # sources this query actually registered.
+                # Constraint: the MEANING of the number is versioned by
+                # `results_count_schema_version` (2 = distinct canonical
+                # http(s) URLs, 1 = the legacy raw hit count), because a row
+                # written by an older engine still carries the old meaning.
+                q.results_count = len({url_canonicalize(h.url) for h in hits
+                                       if h.url.startswith(("http://", "https://"))})
+                q.results_count_schema_version = RESULTS_COUNT_DISTINCT_URLS
+                q.leg_outcomes = outcomes
+                # Decision: the names the route dropped are persisted with the
+                # query.
+                # Why: a planner that asked for a source we do not have (say
+                # "github") must leave a trace, otherwise the branch looks
+                # like it was served as asked.
+                q.dropped_legs = dropped_legs
                 if errors:
                     # Decision: a failed retrieval is recorded on the query, not
                     # flattened into an empty result.
@@ -94,22 +119,77 @@ class RetrievalWorker:
             ttl_hours=self.cfg.search.cache_ttl_hours)
         return hits, ""
 
-    def _execute_one(self, project_id: str, q: SearchQuery) -> tuple[list, list[str]]:
+    def _execute_one(self, project_id: str, q: SearchQuery) -> tuple[list, list[str], list[dict], list[str]]:
+        """Run one query's route.
+
+        Returns (hits, errors, leg_outcomes, dropped_legs):
+        - `errors` holds the providers that FAILED (never the ones that were
+          never configured - INV-012);
+        - `leg_outcomes` holds one entry per route leg, so a leg that
+          resolved to nothing is visible;
+        - `dropped_legs` holds the names the route did not contain.
+        """
         branch = next((b for b in self.repos.branches.all(project_id) if b.id == q.branch), None)
         route = route_for(branch.category if branch else "GENERIC",
                           branch.source_preferences if branch else None)
         results = []
         errors: list[str] = []
-        for prov in route.providers:
-            # "documentation" / "government" / "forum" are web-search refinements
-            target = "web" if prov in ("documentation", "government", "company") else prov
-            hits, err = self._cached_search(target, q.text)
+        outcomes: list[dict] = []
+        for leg in route.legs:
+            # Each leg searches its own query text, so two legs on the same
+            # provider return different hits instead of the same cached set.
+            query_text = f"{q.text}{leg.query_suffix}"
+            # Decision: the registry is consulted BEFORE the cache.
+            # Why: the search cache is a GLOBAL, cross-project cache that
+            #   outlives the run that filled it, so a cached hit set can
+            #   survive a configuration change. Serving those hits for a
+            #   provider the operator has since disabled would report
+            #   network-derived results for an explicitly offline install -
+            #   the same defect class as the watcher building its own
+            #   provider. A leg whose provider is not registered is
+            #   `unconfigured`, whatever the cache happens to hold.
+            # Constraint: the cache is still consulted for a REGISTERED
+            #   provider, so a configured provider keeps its cached hits and
+            #   the cache still saves the network call.
+            if self.registry.get_any(leg.provider) is None:
+                # Not a failure: this provider was never configured (offline
+                # mode, or an optional provider the operator did not enable).
+                # It is still reported, so a leg that can never resolve is
+                # visible instead of silently contributing zero results.
+                # Decision: the invariant "an unconfigured provider is not a
+                # failure" (INV-012) holds for the whole class; the leg is
+                # recorded so the gap is visible, not so it can be counted as
+                # an outage.
+                # Constraint: an OPTIONAL leg that is not registered is a
+                # declared state (`optional_unconfigured`), a REQUIRED one is
+                # a configuration gap (`unconfigured`). The two are different
+                # facts about the installation, so they get different names.
+                status = "optional_unconfigured" if leg.optional else "unconfigured"
+                outcomes.append({"leg": leg.name, "provider": leg.provider,
+                                 "status": status, "hits": 0,
+                                 "error": ""})
+                continue
+            hits, err = self._cached_search(leg.provider, query_text)
             if err:
                 errors.append(err)
+                outcomes.append({"leg": leg.name, "provider": leg.provider,
+                                 "status": "failed", "hits": 0,
+                                 "error": err[:200]})
+                continue
             for h in hits:
-                h.metadata.setdefault("via_provider", prov)
+                # Decision: the hit records the LEG it came from, not the
+                # provider.
+                # Why: two legs can share one provider ("web" and
+                # "documentation"), so the provider name cannot attribute the
+                # hit - the leg name can. The provider is already on the
+                # `SearchResult` row (`provider`).
+                # Constraint: the metadata key is named after the value, so a
+                # reader never has to guess which of the two it holds.
+                h.metadata.setdefault("via_leg", leg.name)
             results.extend(hits)
-        return results, errors
+            outcomes.append({"leg": leg.name, "provider": leg.provider,
+                             "status": "hits", "hits": len(hits), "error": ""})
+        return results, errors, outcomes, list(route.dropped_legs)
 
     def _register_result(self, project_id: str, query_id: str, hit) -> Source | None:
         if not hit.url.startswith(("http://", "https://")):

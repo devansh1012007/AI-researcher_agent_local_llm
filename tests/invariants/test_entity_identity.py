@@ -121,6 +121,163 @@ class TestBug02Idempotency:
                      if t["table"] == "competitor_profiles")
         assert entry["removed"] == 2
 
+    def test_data_repair_keeps_the_genuinely_oldest_duplicate(self, tmp_path):
+        """T10 (C08): the survivor is the row with the EARLIEST payload
+        `created_at`, not the row whose id happens to sort first.
+
+        Entity ids are ULIDs now and legacy rows keep their old counter
+        ids, so SQLite BINARY order puts the legacy `cpx_200000` AFTER the
+        ULID `cpx_01M5...`. Ordering by id would keep the newer row and
+        DELETE the genuinely oldest one - silent data loss.
+        """
+        from research_engine.specialists.startup.models import CompetitorProfile
+        from research_engine.specialists.startup.repos import StartupRepos
+        from research_engine.specialists.startup.data_repair import repair_project
+        from research_engine.storage.database import Database
+        import json as _json
+        db = Database(pathlib.Path(tmp_path) / "t.sqlite")
+        repos = StartupRepos(db)
+        db._conn().execute("DROP INDEX IF EXISTS ux_competitors_name")
+        legacy_id = "cpx_200000"
+        ulid_id = "cpx_01M5HC1KF2XHWHDA13EBMYNTBG"
+        for row_id, name, created_at, product in (
+                (legacy_id, "Acme", "2020-01-01T00:00:00Z", "oldest-legacy"),
+                (ulid_id, "acme", "2026-01-01T00:00:00.500000Z", "newer-ulid")):
+            e = CompetitorProfile(project_id="p", name=name, product=product)
+            e.id = row_id
+            d = _json.loads(e.model_dump_json())
+            d["created_at"] = created_at
+            db.upsert("competitor_profiles", row_id, "p", d,
+                      {"name_lower": name.lower(), "classification": ""})
+        assert len(repos.competitor_profiles.all("p")) == 2
+
+        summary = repair_project(db)
+
+        after = repos.competitor_profiles.all("p")
+        assert len(after) == 1, "the duplicate group was not deduplicated"
+        survivor = after[0]
+        assert survivor.id == legacy_id, (
+            f"the wrong survivor was kept: {survivor.id} (id order is not "
+            f"creation order)")
+        assert survivor.product == "oldest-legacy", (
+            "the surviving row is not the genuinely oldest one")
+        entry = next(t for t in summary["tables"]
+                     if t["table"] == "competitor_profiles")
+        assert entry["removed"] == 1
+
+    def test_data_repair_parses_the_timestamp_never_compares_it_as_text(self, tmp_path):
+        """T10 (C08): the payload timestamp must be PARSED, never compared
+        as text.
+
+        Pydantic omits the fractional part when the microseconds are exactly
+        0, so `'2026-01-01T00:00:00Z'` is GREATER than
+        `'2026-01-01T00:00:00.500000Z'` as a string although it is the OLDER
+        instant. A text comparison therefore keeps the NEWER row and DELETES
+        the genuinely oldest one - silent data loss.
+
+        The ids are chosen so that the id order DISAGREES with the
+        chronological order: `cpx_000001` (the LOWER id) is the NEWER row, so
+        a survivor chosen by id order - the pre-fix behaviour - is the wrong
+        one and this test fails.
+        """
+        from research_engine.specialists.startup.models import CompetitorProfile
+        from research_engine.specialists.startup.repos import StartupRepos
+        from research_engine.specialists.startup.data_repair import repair_project
+        from research_engine.storage.database import Database
+        import json as _json
+        db = Database(pathlib.Path(tmp_path) / "t.sqlite")
+        repos = StartupRepos(db)
+        db._conn().execute("DROP INDEX IF EXISTS ux_competitors_name")
+        zero_id = "cpx_000002"        # the LOWER id is the OLDER row
+        half_id = "cpx_000001"        # the HIGHER id is the NEWER row
+        for row_id, name, created_at, product in (
+                (half_id, "Acme", "2026-01-01T00:00:00.500000Z", "newer-half"),
+                (zero_id, "acme", "2026-01-01T00:00:00Z", "oldest-zero")):
+            e = CompetitorProfile(project_id="p", name=name, product=product)
+            e.id = row_id
+            d = _json.loads(e.model_dump_json())
+            d["created_at"] = created_at
+            db.upsert("competitor_profiles", row_id, "p", d,
+                      {"name_lower": name.lower(), "classification": ""})
+        assert len(repos.competitor_profiles.all("p")) == 2
+
+        summary = repair_project(db)
+
+        after = repos.competitor_profiles.all("p")
+        assert len(after) == 1, "the duplicate group was not deduplicated"
+        survivor = after[0]
+        assert survivor.id == zero_id, (
+            f"the wrong survivor was kept: {survivor.id} - the timestamp was "
+            f"compared as text, so '...:00Z' sorted after '...:00.500000Z' "
+            f"although it is the older instant")
+        assert survivor.product == "oldest-zero", (
+            "the surviving row is not the genuinely oldest one")
+        # the genuinely oldest row must survive; the newer one is deleted
+        assert repos.competitor_profiles.get(half_id) is None, (
+            "the newer row was kept and the genuinely oldest row deleted")
+        entry = next(t for t in summary["tables"]
+                     if t["table"] == "competitor_profiles")
+        assert entry["removed"] == 1
+
+    def test_data_repair_never_lets_an_unknown_age_displace_a_known_one(self, tmp_path):
+        """The other half of the oldest-first rule: a row whose age is
+        UNKNOWN must not win a duplicate group.
+
+        `repair_project` DELETES the rows it does not keep, so an
+        unknown-age row that sorted FIRST would delete the genuinely
+        oldest row - silent data loss. The graph store's half of the same
+        rule is pinned in `tests/unit/test_stage2_id_ordering.py`; this is
+        the half that destroys rows.
+
+        The ids are chosen so that the id order DISAGREES with the
+        correct outcome: the unknown-age row has the LOWER id, so a
+        survivor chosen by id order (the pre-fix behaviour) would keep
+        the wrong row and the test would fail.
+        """
+        from research_engine.specialists.startup.models import CompetitorProfile
+        from research_engine.specialists.startup.repos import StartupRepos
+        from research_engine.specialists.startup.data_repair import repair_project
+        from research_engine.storage.database import Database
+        import json as _json
+        db = Database(pathlib.Path(tmp_path) / "t.sqlite")
+        repos = StartupRepos(db)
+        db._conn().execute("DROP INDEX IF EXISTS ux_competitors_name")
+        unknown_id = "cpx_000007"        # legacy counter id, no timestamp
+        known_id = "cpx_01M5HC1KF2XHWHDA13EBMYNTBG"
+        for row_id, name, created_at, product in (
+                (unknown_id, "Acme", None, "unknown-age"),
+                (known_id, "acme", "2020-01-01T00:00:00Z", "known-age")):
+            e = CompetitorProfile(project_id="p", name=name, product=product)
+            e.id = row_id
+            d = _json.loads(e.model_dump_json())
+            if created_at is None:
+                # a row written before the payload carried a timestamp
+                d.pop("created_at", None)
+            else:
+                d["created_at"] = created_at
+            db.upsert("competitor_profiles", row_id, "p", d,
+                      {"name_lower": name.lower(), "classification": ""})
+        assert len(repos.competitor_profiles.all("p")) == 2
+
+        summary = repair_project(db)
+
+        after = repos.competitor_profiles.all("p")
+        assert len(after) == 1, "the duplicate group was not deduplicated"
+        survivor = after[0]
+        assert survivor.id == known_id, (
+            f"the wrong survivor was kept: {survivor.id} - a row of unknown "
+            f"age must never displace a row with a known age")
+        assert survivor.product == "known-age", (
+            "the surviving row is not the row with the known age")
+        # the unknown-age row is the one that was deleted
+        assert repos.competitor_profiles.get(unknown_id) is None, (
+            "the unknown-age row was kept and the known-age row deleted")
+        entry = next(t for t in summary["tables"]
+                     if t["table"] == "competitor_profiles")
+        assert entry["removed"] == 1
+        assert entry["rows_unknown_age"] == 1, (
+            "the row of unknown age was not counted in the audit summary")
+
     def test_kb_seeding_idempotent(self, seeded_project):
         orch, cfg, tmp, pid = seeded_project
         from research_engine.specialists.startup.kb import MarketKnowledgeBase

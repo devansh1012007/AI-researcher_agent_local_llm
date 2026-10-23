@@ -54,7 +54,7 @@ See [docs/architecture.md](docs/architecture.md) and the subsystem docs:
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
-pytest                       # 80 tests, fully offline (no network/model needed)
+pytest                       # 378 tests, fully offline (no network/model needed)
 ```
 
 ### Local inference
@@ -149,7 +149,7 @@ src/research_engine/
     prompts/     registry + versioned templates
     modes/       academic + startup
     cli/         `research` command
-tests/           unit / integration / failure / evaluation (fully offline, 80 tests)
+tests/           unit / integration / failure / evaluation (fully offline, 378 tests)
 evals/           golden tasks + phase2 tasks + metrics + runner
 skills/          domain playbooks (markdown)
 docs/            architecture & subsystem docs

@@ -1,13 +1,13 @@
 """Data repair for pre-fix duplication (audit BUG-02).
 
-Deduplicates startup domain tables by NATURAL KEY, keeping the oldest row
-as canonical, merging list/dict provenance into it (INVARIANT-003), and
-deleting the remainder. Auditable: returns a per-table summary.
+Deduplicates startup domain tables by NATURAL KEY, keeping the OLDEST row
+(the one with the EARLIEST payload ``created_at``) as canonical, merging
+list/dict provenance into it (INVARIANT-003), and deleting the remainder.
+Auditable: returns a per-table summary.
 
 Usage:
     from research_engine.specialists.startup.data_repair import repair_project
-    summary = repair_project(db)              # Database instance
-    summary = repair_startup_kb(kb_db)       # market_kb.sqlite Database
+    summary = repair_project(db)              # per-project Database instance
 
 CLI: `research repair-startup <project_id>` / `--all`
 """
@@ -16,6 +16,7 @@ from __future__ import annotations
 from research_engine.specialists.startup.identity import (
     desc_fingerprint, norm_name, price_key)
 from research_engine.specialists.startup.repos import StartupRepos
+from research_engine.storage.database import parse_payload_timestamp
 
 
 def _group_key(table: str, d: dict) -> tuple | None:
@@ -68,14 +69,48 @@ _MODEL_BY_TABLE = {
 }
 
 
+def _oldest_first_key(row_id: str, data: dict) -> tuple:
+    """Sort key that puts the genuinely OLDEST row of a duplicate group first.
+
+    Decision: the survivor is the row with the EARLIEST payload
+    ``created_at``; ``id`` breaks ties so the order is total and
+    deterministic.
+    Why: entity ids are ULIDs now and rows written before that change keep
+    their old ``<prefix>_%06d`` ids, so SQLite BINARY order is NOT
+    creation order - ``cpx_200000`` sorts AFTER ``cpx_01M5...``. Ordering
+    by id would keep the wrong row and DELETE the genuinely oldest one:
+    silent data loss.
+    Constraint: ``created_at`` lives inside the row's JSON payload (there
+    is no ``created_at`` column) and MUST be parsed, never compared as
+    text: pydantic omits the fractional part when the microseconds are
+    exactly 0, so ``'...:00Z' < '...:00.500000Z'`` is false as a string
+    comparison but true chronologically. A row whose ``created_at`` is
+    missing or unparseable has an UNKNOWN age: it sorts last and never
+    displaces a row with a known timestamp.
+    """
+    stamp = parse_payload_timestamp(data.get("created_at"))
+    if stamp is None:
+        return (1, row_id)
+    return (0, stamp, row_id)
+
+
 def _dedupe_table(repos: StartupRepos, db, table: str) -> dict:
-    # ids are sequential (ent_000001-style): id order == insertion order,
-    # so the oldest row of each duplicate group sorts first
+    # The scan order (ORDER BY id) is a DETERMINISTIC BASE for the group
+    # scan only. It has NO bearing on which row survives: the survivor is
+    # decided by the payload `created_at` in `_oldest_first_key` below, and
+    # the id is only the tie-break. The id text is not a creation order
+    # (ULID vs legacy counter ids), so this ORDER BY must never be read as
+    # "the oldest row comes first".
     raw = db.execute(f"SELECT id, project_id, data FROM {table} ORDER BY id")
     groups: dict[tuple, list] = {}
+    unknown_age = 0
     for r in raw:
         import json as _json
         d = _json.loads(r["data"])
+        if parse_payload_timestamp(d.get("created_at")) is None:
+            # a row without a usable timestamp cannot be proven to be the
+            # oldest one - it is counted so the summary stays auditable
+            unknown_age += 1
         k = _group_key(table, d)
         if k is None:
             continue
@@ -93,6 +128,12 @@ def _dedupe_table(repos: StartupRepos, db, table: str) -> dict:
     for _, members in groups.items():
         if len(members) <= 1:
             continue
+        # oldest wins: the survivor is decided by the payload timestamp,
+        # NOT by the id text (the scan order above is only a stable base
+        # for the sort). The survivor keeps its ORIGINAL id and its
+        # ORIGINAL created_at, so the natural-key identity is preserved
+        # (INVARIANT-003).
+        members.sort(key=lambda m: _oldest_first_key(m[0], m[1]))
         keep_id, keep_data = members[0]
         if repo is not None and model_name:
             canonical = repo.model.model_validate(keep_data)
@@ -118,7 +159,8 @@ def _dedupe_table(repos: StartupRepos, db, table: str) -> dict:
         merged_into += 1
     total = len(raw)
     return {"table": table, "before": total, "removed": removed,
-            "duplicate_groups": merged_into, "after": total - removed}
+            "duplicate_groups": merged_into, "after": total - removed,
+            "rows_unknown_age": unknown_age}
 
 
 def repair_project(db) -> dict:

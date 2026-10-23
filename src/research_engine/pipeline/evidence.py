@@ -227,7 +227,11 @@ class EvidenceWorker:
                 self.repos.claims.save(match)
                 existing_claims.append(match)
                 new_count += 1
-            elif ev.kind == ClaimKind.FACT and match.kind != ClaimKind.FACT:
+            else:
+                # A claim with equivalent text already exists - this evidence
+                # is a duplicate claim, not a new one.
+                dup_count += 1
+            if ev.kind == ClaimKind.FACT and match.kind != ClaimKind.FACT:
                 pass  # never upgrade inference/assumption claims to fact silently
             if ev.id not in match.supported_by:
                 match.supported_by.append(ev.id)

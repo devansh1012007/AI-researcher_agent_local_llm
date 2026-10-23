@@ -838,6 +838,15 @@ boundary, so P0-2 is a P0 and gets an explicit regression test.
 phase → independent review subagent → tests → next phase. No wave is declared
 done on a green suite alone.
 
+**Stage→wave mapping** (from `docs/plans/2026-10-22-evidence-pipeline-and-analyst-review.md` §E):
+| Plan stage | Scope | Maps to FIX_PLAN wave |
+|---|---|---|
+| Stage 1 | Dead legs, honest counts (C01-C06) | P1-13, P1-14 (+ new) |
+| Stage 2 | Collision-free ids (C07, C08, C22) | P0-3 (W5) |
+| Stage 3 | Enforced egress (C09-C12, C23) | P0-6 (W6) |
+| Stage 4 | Analyst review (C13-C16) | new |
+| Stage 5 | Quality benchmark (C17-C21, C24) | new (P3-1...P3-9 partial) |
+
 **Sequencing note.** W5 (ULID) is deliberately *after* W1–W4: those waves add
 entities and rows, and doing the ID migration first would mean re-verifying
 their tests against two ID formats. W5's own regression tests pin the format,

@@ -104,12 +104,28 @@ class EvidenceService:
         claim = orch.repos.claims.get(claim_id)
         if claim is None or claim.project_id != project_id:
             raise NotFoundError("claim", claim_id)
-        for eid in claim.evidence_ids:
+        # Decision: read the claim's real fields - `supported_by` (the
+        # evidence that supports it) and `contradicted_by` (the evidence that
+        # contradicts it).
+        # Why: the previous code read `claim.evidence_ids`, a field Claim
+        # does not have, so every real claim raised AttributeError and the
+        # MCP get_claim/trace_claim tools returned an internal error. The
+        # contradicting evidence is included because a claim's provenance is
+        # incomplete without it - the `role` key says which is which.
+        # Constraint: the chain shape only gains a key; it never drops one.
+        # KNOWN GAP: `Claim.contradicted_by` has NO production writer in
+        # this codebase - the only place it is set is a test. So the
+        # "contradicts" role is unreachable in a live run today; the reader
+        # handles the field so the chain is complete and future-proof, NOT
+        # because contradiction provenance is live. Do not read a passing
+        # trace_claim test as evidence that contradictions are detected.
+        for eid, role in [(eid, "supports") for eid in claim.supported_by] + \
+                          [(eid, "contradicts") for eid in claim.contradicted_by]:
             ev = orch.repos.evidence.get(eid)
             if ev is None:
                 continue
             src = orch.repos.sources.get(ev.source_id)
-            chain.append({"evidence_id": eid, "quote": ev.quote,
+            chain.append({"evidence_id": eid, "role": role, "quote": ev.quote,
                           "tier": ev.source_tier, "status": ev.status.value
                           if hasattr(ev.status, "value") else str(ev.status),
                           "url": ev.source_url,

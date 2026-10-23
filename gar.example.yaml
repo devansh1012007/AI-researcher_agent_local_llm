@@ -36,7 +36,6 @@ research:
 network:
   timeout_seconds: 20
   max_retries: 3
-  respect_robots: true
 
 resources:
   max_parallel_fetches: 5       # IO-bound, safe to parallelize

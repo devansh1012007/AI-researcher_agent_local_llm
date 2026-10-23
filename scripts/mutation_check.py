@@ -8,10 +8,13 @@ Usage:
     python scripts/mutation_check.py            # run all mutations
     python scripts/mutation_check.py M-1 M-5    # run a subset
 
-Exit code 0 iff every mutation was detected.
+Exit code 0 iff every mutation was detected AND every mutated source file
+was restored byte-identically. A failed restore fails the gate: a run that
+leaves a mutated file in the tree is a false all-clear.
 """
 from __future__ import annotations
 
+import importlib.util
 import shutil
 import subprocess
 import sys
@@ -122,6 +125,31 @@ MUTATIONS = [
      '''                raise SearchProviderError("semantic scholar: rate limited (429)")''',
      '''                return []''',
      "tests/invariants/test_search_failure_semantics.py::TestProviderContract"),
+
+    # M-16: the duplicate repair must PARSE the payload timestamp, never
+    # compare it as text. As text, '...:00Z' sorts AFTER '...:00.500000Z'
+    # although it is the older instant, so the repair would keep the newer
+    # row and DELETE the genuinely oldest one - silent data loss.
+    ("M-16", "src/research_engine/specialists/startup/data_repair.py",
+     '''    stamp = parse_payload_timestamp(data.get("created_at"))''',
+     '''    stamp = data.get("created_at")''',
+     "tests/invariants/test_entity_identity.py::TestBug02Idempotency::test_data_repair_parses_the_timestamp_never_compares_it_as_text"),
+
+    # M-17: the report must state which meaning the count carries. Rendering
+    # the new basis as the legacy one is the defect INV-026 forbids.
+    ("M-17", "src/research_engine/reports/generator.py",
+     '''    RESULTS_COUNT_DISTINCT_URLS: "distinct urls",''',
+     '''    RESULTS_COUNT_DISTINCT_URLS: "legacy hits",''',
+     "tests/invariants/test_search_outcome_honesty.py::TestReportStatesTheHonestNumbers::test_the_report_renders_both_count_bases_and_the_leg_outcomes"),
+
+    # M-18: the count is DISTINCT canonical http(s) URLs, not raw hits. Two
+    # legs on the same provider surface the same documents, so the raw hit
+    # count overstates what was found.
+    ("M-18", "src/research_engine/pipeline/retrieval.py",
+     '''                q.results_count = len({url_canonicalize(h.url) for h in hits
+                                       if h.url.startswith(("http://", "https://"))})''',
+     '''                q.results_count = len(hits)''',
+     "tests/unit/test_stage1_dead_legs.py::TestLegOutcomes::test_the_persisted_query_row_carries_the_count_and_the_outcomes"),
 ]
 
 
@@ -129,8 +157,56 @@ def _run(cmd: list[str]) -> int:
     return subprocess.call(cmd, cwd=ROOT)
 
 
+def _invalidate_bytecode(target: Path) -> None:
+    """Drop the cached bytecode for a mutated file.
+
+    Decision: the mutated file's ``__pycache__`` entry is removed after
+    the mutation is reverted.
+    Why: CPython validates a cached ``.pyc`` against its source using
+    (mtime-seconds, source-size). M-1 rewrites ``<= 2`` to ``<= 9`` -
+    the same byte length - and the revert lands in the same second the
+    mutation was written, so the MUTATED bytecode still looks valid and
+    Python keeps importing it after the source was restored. The symptom
+    is a test that fails against a source tree that no longer contains
+    the defect (observed: ``assert 'high' in ('medium','low')`` while
+    the source said ``<= 2``). A stale ``.pyc`` also outlives the
+    mutation run and poisons later, unrelated test runs.
+    Constraint: only the mutated file's cache entry is removed; the
+    rest of the tree's bytecode cache is left intact.
+    """
+    cache_dir = Path(importlib.util.cache_from_source(str(target))).parent
+    stem = target.stem
+    for cached in cache_dir.glob(f"{stem}.*.pyc"):
+        try:
+            cached.unlink()
+        except OSError:
+            pass
+
+
+def _assert_reverted(target: Path, original: str, mid: str) -> bool:
+    """Confirm the source really is back to its original text.
+
+    Decision: a failed restore FAILS the gate.
+    Why: there is no CI in this repository - this script IS the gate. A
+    run that reports "tests DETECTED" while leaving a MUTATED file in the
+    tree is a false all-clear: the defect is inherited by the next run
+    and by every test run afterwards. The old code printed a WARNING and
+    returned a value nobody read, so the exit code stayed 0.
+    Constraint: the restore is done from the pre-mutation backup, so a
+    failure here means the file on disk differs from the file the
+    mutation was applied to - it is never a false alarm.
+    """
+    current = target.read_text()
+    if current == original:
+        return True
+    print(f"ERROR: {mid} - {target} was NOT restored cleanly")
+    return False
+
+
 def main(selected: list[str]) -> int:
     results = []
+    # (mutation id, mutated file, the text the file had before the run)
+    mutated: list[tuple[str, Path, str]] = []
     for mid, rel, old, new, tests in MUTATIONS:
         if selected and mid not in selected:
             continue
@@ -142,8 +218,10 @@ def main(selected: list[str]) -> int:
         tmpdir = tempfile.mkdtemp()
         backup = Path(tmpdir) / target.name
         shutil.copy(target, backup)
+        restored = True
         try:
             target.write_text(original.replace(old, new, 1))
+            _invalidate_bytecode(target)
             rc = _run([str(ROOT / ".venv" / "bin" / "python"), "-m",
                        "pytest", "-x", "-q", tests])
             detected = rc != 0
@@ -151,18 +229,31 @@ def main(selected: list[str]) -> int:
                             detected))
         finally:
             shutil.copy(backup, target)
+            _invalidate_bytecode(target)
+            restored = _assert_reverted(target, original, mid)
             shutil.rmtree(tmpdir, ignore_errors=True)
+        if not restored:
+            results.append((mid, "RESTORE FAILED (source left mutated)", False))
+        mutated.append((mid, target, original))
+
+    # Safety net: every file this run mutated must be byte-identical to the
+    # text it had BEFORE the run. The per-mutation restore above already
+    # checks this; this is the independent end-of-run verification, because
+    # a file left mutated turns the NEXT run into a false all-clear.
+    already_failed = {mid for mid, _, ok in results if not ok}
+    for mid, target, original in mutated:
+        if target.read_text() == original:
+            continue
+        print(f"ERROR: verify revert of {target} ({mid})")
+        if mid not in already_failed:
+            results.append((mid, "VERIFY REVERT FAILED (file differs from the "
+                                "pre-run text)", False))
 
     print("\n=== MUTATION RESULTS ===")
     all_ok = True
     for mid, msg, ok in results:
         print(f"{mid}: {msg}")
         all_ok &= ok
-    # safety: confirm working tree clean of mutations
-    for _, rel, old, _, _ in MUTATIONS:
-        t = ROOT / rel
-        if old not in t.read_text() and old.strip():
-            print(f"WARNING: verify revert of {rel}")
     return 0 if all_ok else 1
 
 
