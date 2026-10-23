@@ -1,0 +1,7 @@
+W1-IMPL-01	evals/metrics/eval_metrics.py
+W1-IMPL-01	tests/evaluation/test_eval_framework.py
+W1-IMPL-02	docs/invariants.md
+W1-IMPL-02	docs/service-boundaries.md
+W1-IMPL-03	scripts/mutation_check.py
+W1-IMPL-04	src/research_engine/core/config.py
+W1-IMPL-04	tests/unit/test_local_only_gating.py

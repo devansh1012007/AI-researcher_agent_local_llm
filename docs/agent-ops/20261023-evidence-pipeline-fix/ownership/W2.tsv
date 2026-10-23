@@ -1,0 +1,11 @@
+W2-IMPL-05	src/research_engine/providers/llm/router.py
+W2-IMPL-06	src/research_engine/providers/academic/openalex.py
+W2-IMPL-06	src/research_engine/providers/academic/crossref.py
+W2-IMPL-07	src/research_engine/providers/academic/arxiv.py
+W2-IMPL-07	src/research_engine/providers/academic/semantic_scholar.py
+W2-IMPL-08	src/research_engine/providers/search/duckduckgo.py
+W2-IMPL-09	src/research_engine/providers/llm/ollama.py
+W2-IMPL-09	src/research_engine/providers/llm/openai_compat.py
+W2-IMPL-10	src/research_engine/providers/embeddings/base.py
+W2-IMPL-11	src/research_engine/pipeline/fetching.py
+W2-IMPL-12	src/research_engine/core/orchestrator.py

@@ -46,7 +46,7 @@ Orchestrator-owned; source of truth for resume. Updated at every wave boundary.
 
 ### Wave 2 — C09 egress enforcement (8 agents, parallel)
 - WAVE_BASE_SHA: <to be set at dispatch>
-- Agents: W2-IMPL-05..11 (T-005..T-011)
+- Agents: W2-IMPL-05..12 (T-005..T-012)
 - Ownership file: ownership/W2.tsv
 - Pre-mortem: T-005 changes `build_provider` signature (contract change). All other W2 agents depend on T-005's new `policy` param but do NOT call `build_provider` directly — they add `policy.allows()/require()` inside their own provider files. Risk: if T-005's `policy` param default isn't `None`-safe, existing callers of `build_provider` (only `ModelRouter.for_role`) break. Mitigation: `policy: EgressPolicy | None = None` default; `ModelRouter` passes the policy.
 - Gate results: <pending>
@@ -56,7 +56,7 @@ Orchestrator-owned; source of truth for resume. Updated at every wave boundary.
 
 ### Wave 3 — W4 sandbox guard (2 agents, parallel)
 - WAVE_BASE_SHA: <to be set at dispatch>
-- Agents: W3-IMPL-12 (T-012), W3-IMPL-13 (T-013)
+- Agents: W3-IMPL-12 (T-013), W3-IMPL-13 (T-014)
 - Ownership file: ownership/W3.tsv
 - Pre-mortem: T-012 rewrites the sandbox guard; T-013 adds a test that exercises it. Risk: T-013's test may not run without the shared env (needs `exec()` sandbox); mark NOT-RUN if needed.
 - Gate results: <pending>
