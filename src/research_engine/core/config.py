@@ -136,7 +136,14 @@ class McpConfig(BaseModel):
 
 
 class SecurityConfig(BaseModel):
-    local_only: bool = True            # spec #100 environment modes
+    # Decision: default False. `local_only=True` forces LOCAL_ONLY in
+    # `effective_environment()` (fail-closed privacy gate: no network
+    # providers are constructed under LOCAL_ONLY). The default must stay
+    # False so `AppConfig()` (mode: local) keeps resolving to HYBRID —
+    # today's behaviour — and existing tests that build the default
+    # registry from `AppConfig()` still register providers. Operators opt
+    # into strict local-only via `security.local_only: true` in gar.yaml.
+    local_only: bool = False            # spec #100 environment modes
     privacy_mode: bool = False         # spec #99: no external calls at all
     data_classification: str = "INTERNAL"   # PUBLIC|INTERNAL|SENSITIVE|LOCAL_ONLY
     allowed_roots: list[str] = Field(default_factory=list)  # filesystem sandbox (#65)
@@ -169,13 +176,20 @@ class PlatformConfig(BaseModel):
         Mapping: ``offline`` -> LOCAL_ONLY (zero non-loopback egress),
         ``local`` -> HYBRID (loopback LLM + network retrieval, today's
         behaviour with a truthful label), ``online`` -> ONLINE.
-        ``privacy_mode: true`` forces LOCAL_ONLY. An unknown mode resolves
-        to LOCAL_ONLY and logs a loud error - fail closed.
+        ``privacy_mode: true`` and ``local_only: true`` each force
+        LOCAL_ONLY. An unknown mode resolves to LOCAL_ONLY and logs a loud
+        error - fail closed.
         """
         import logging
 
         log = logging.getLogger(__name__)
         if self.security.privacy_mode:
+            return "LOCAL_ONLY"
+        if self.security.local_only:
+            log.info(
+                "security.local_only is true: resolving environment to "
+                "LOCAL_ONLY (fail closed; no network providers)",
+            )
             return "LOCAL_ONLY"
         resolved = {
             "offline": "LOCAL_ONLY",
