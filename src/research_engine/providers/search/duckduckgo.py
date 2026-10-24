@@ -12,6 +12,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 import httpx
 
+from research_engine.core.http_policy import EgressPolicy
 from research_engine.providers.search.base import (RawSearchHit, SearchProvider,
                                                     SearchProviderError)
 
@@ -39,8 +40,9 @@ def _decode_ddg_url(href: str) -> str:
 class DuckDuckGoProvider(SearchProvider):
     name = "duckduckgo"
 
-    def __init__(self, timeout: float = 15.0):
+    def __init__(self, timeout: float = 15.0, policy: EgressPolicy | None = None):
         self.timeout = timeout
+        self.policy = policy
 
     def search(self, query: str, max_results: int = 10) -> list[RawSearchHit]:
         attempts = [
@@ -51,10 +53,14 @@ class DuckDuckGoProvider(SearchProvider):
         served = False
         for method, base, params in attempts:
             try:
+                if self.policy is not None:
+                    self.policy.require(urlparse(base).hostname, "duckduckgo search")
                 if method == "GET":
                     resp = httpx.get(base, params=params, headers=_HEADERS,
                                      timeout=self.timeout, follow_redirects=True)
                 else:
+                    if self.policy is not None:
+                        self.policy.require(urlparse(base).hostname, "duckduckgo search")
                     resp = httpx.post(base, data={"q": query}, headers=_HEADERS,
                                       timeout=self.timeout, follow_redirects=True)
                 if resp.status_code != 200:
@@ -95,12 +101,17 @@ class DuckDuckGoProvider(SearchProvider):
 class SearxngProvider(SearchProvider):
     name = "searxng"
 
-    def __init__(self, base_url: str, timeout: float = 15.0):
+    def __init__(self, base_url: str, timeout: float = 15.0,
+                 policy: EgressPolicy | None = None):
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
+        self.policy = policy
 
     def search(self, query: str, max_results: int = 10) -> list[RawSearchHit]:
         try:
+            if self.policy is not None:
+                self.policy.require(urlparse(f"{self.base_url}/search").hostname,
+                                    "searxng search")
             resp = httpx.get(f"{self.base_url}/search", params={"q": query, "format": "json"},
                              headers={"User-Agent": _UA}, timeout=self.timeout)
             resp.raise_for_status()
