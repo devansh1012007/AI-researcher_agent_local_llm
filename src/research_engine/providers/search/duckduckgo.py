@@ -8,7 +8,7 @@ from __future__ import annotations
 import logging
 import re
 from html import unescape
-from urllib.parse import parse_qs, unquote, urlparse
+from urllib.parse import parse_qs, unquote, urljoin, urlparse
 
 import httpx
 
@@ -26,6 +26,39 @@ _HEADERS = {
     "Accept-Language": "en-US,en;q=0.9",
     "Referer": "https://duckduckgo.com/",
 }
+
+MAX_REDIRECTS = 10
+
+
+def _request_with_redirect_check(method: str, url: str, policy: EgressPolicy | None,
+                                 **kwargs) -> httpx.Response:
+    """Perform an HTTP request, following 301/302/307/308 hops with per-hop
+    egress validation.
+
+    Mirrors the redirect loop in pipeline/fetching.py so a 302 to an external
+    host cannot escape the pre-flight host check under LOCAL_ONLY. Auto-redirect
+    is disabled (follow_redirects=False) and every ``Location`` host is
+    re-validated through ``policy.require`` before being followed, bounded by
+    ``MAX_REDIRECTS``.
+    """
+    current_url = url
+    for _ in range(MAX_REDIRECTS):
+        kwargs.pop("follow_redirects", None)
+        if method.upper() == "GET":
+            resp = httpx.get(current_url, follow_redirects=False, **kwargs)
+        else:
+            resp = httpx.post(current_url, follow_redirects=False, **kwargs)
+        if resp.status_code in (301, 302, 307, 308):
+            location = resp.headers.get("location")
+            if not location:
+                break
+            redirect_url = urljoin(current_url, location)
+            if policy is not None:
+                policy.require(urlparse(redirect_url).hostname or "", "redirect")
+            current_url = redirect_url
+            continue
+        return resp
+    raise httpx.HTTPError("too many redirects")
 
 
 def _decode_ddg_url(href: str) -> str:
@@ -56,13 +89,13 @@ class DuckDuckGoProvider(SearchProvider):
                 if self.policy is not None:
                     self.policy.require(urlparse(base).hostname, "duckduckgo search")
                 if method == "GET":
-                    resp = httpx.get(base, params=params, headers=_HEADERS,
-                                     timeout=self.timeout, follow_redirects=True)
+                    resp = _request_with_redirect_check(method, base, self.policy,
+                                                        params=params, headers=_HEADERS,
+                                                        timeout=self.timeout)
                 else:
-                    if self.policy is not None:
-                        self.policy.require(urlparse(base).hostname, "duckduckgo search")
-                    resp = httpx.post(base, data={"q": query}, headers=_HEADERS,
-                                      timeout=self.timeout, follow_redirects=True)
+                    resp = _request_with_redirect_check(method, base, self.policy,
+                                                        data={"q": query}, headers=_HEADERS,
+                                                        timeout=self.timeout)
                 if resp.status_code != 200:
                     log.warning("ddg status %s from %s", resp.status_code, base)
                     continue
@@ -112,8 +145,10 @@ class SearxngProvider(SearchProvider):
             if self.policy is not None:
                 self.policy.require(urlparse(f"{self.base_url}/search").hostname,
                                     "searxng search")
-            resp = httpx.get(f"{self.base_url}/search", params={"q": query, "format": "json"},
-                             headers={"User-Agent": _UA}, timeout=self.timeout)
+            resp = _request_with_redirect_check("GET", f"{self.base_url}/search", self.policy,
+                                                params={"q": query, "format": "json"},
+                                                headers={"User-Agent": _UA},
+                                                timeout=self.timeout)
             resp.raise_for_status()
             out = []
             for r in resp.json().get("results", [])[:max_results]:

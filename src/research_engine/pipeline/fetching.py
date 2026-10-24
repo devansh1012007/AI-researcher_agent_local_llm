@@ -101,6 +101,18 @@ class DocumentFetcher:
                             self.policy.require(urlparse(redirect_url).hostname or "", "redirect")
                             current_url = redirect_url
                             continue
+                        # Restore the pre-body status check that was removed:
+                        # retryable statuses (429/500/502/503/504) must raise
+                        # httpx.HTTPStatusError so the existing
+                        # `except httpx.HTTPStatusError` handler re-raises them
+                        # for `run_with_retries` backoff (INV-012). Without this
+                        # the except block below is unreachable dead code.
+                        if resp.status_code in (429, 500, 502, 503, 504):
+                            raise httpx.HTTPStatusError(
+                                f"server returned {resp.status_code}",
+                                request=resp.request,
+                                response=resp,
+                            )
                         body = bytearray()
                         for chunk in resp.iter_bytes(chunk_size=65536):
                             body.extend(chunk)

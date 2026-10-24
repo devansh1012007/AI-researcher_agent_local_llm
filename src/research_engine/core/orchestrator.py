@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 
 from research_engine.core.budget import Budget
 from research_engine.core.config import AppConfig
-from research_engine.core.http_policy import EgressPolicy, build_egress_policy
+from research_engine.core.http_policy import build_egress_policy
 from research_engine.core.state_machine import StateMachine
 from research_engine.models.enums import (
     ProjectState, ReviewGate, StopReason, TaskStatus, TaskType,
