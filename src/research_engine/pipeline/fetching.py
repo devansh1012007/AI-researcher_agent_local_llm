@@ -8,10 +8,12 @@ import logging
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urljoin, urlparse
 
 import httpx
 
 from research_engine.core.config import AppConfig
+from research_engine.core.http_policy import build_egress_policy
 from research_engine.core.retry import NETWORK, run_with_retries
 from research_engine.core.ids import stable_hash
 from research_engine.storage.cache import KVCache, cache_key
@@ -55,6 +57,9 @@ class DocumentFetcher:
         self.cache = cache or KVCache(Path(cfg.storage.data_dir) / "_global" / "fetch_cache.sqlite")
         self.transport = transport  # injectable for offline tests
         self.max_bytes = int(cfg.resources.max_document_size_mb * 1024 * 1024)
+        self.policy = build_egress_policy(cfg)
+
+    MAX_REDIRECTS = 10
 
     def fetch(self, url: str, force_refresh: bool = False) -> FetchedContent:
         key = cache_key("fetch", url)
@@ -77,23 +82,38 @@ class DocumentFetcher:
     def _do_fetch(self, url: str) -> FetchedContent:
         ncfg = self.cfg.network
         try:
-            with httpx.Client(follow_redirects=True, timeout=ncfg.timeout_seconds,
+            # Validate the initial host before any network call. A pre-flight
+            # check alone is insufficient: a 302 to an external host escapes it,
+            # so every redirect hop is re-validated below.
+            self.policy.require(urlparse(url).hostname or "", "document fetch")
+            with httpx.Client(follow_redirects=False, timeout=ncfg.timeout_seconds,
                               headers={"User-Agent": ncfg.user_agent},
                               transport=self.transport) as client:
-                with client.stream("GET", url) as resp:
-                    if resp.status_code in (429, 503):
-                        raise httpx.HTTPStatusError("rate limited", request=resp.request, response=resp)
-                    body = bytearray()
-                    for chunk in resp.iter_bytes(chunk_size=65536):
-                        body.extend(chunk)
-                        if len(body) > self.max_bytes:
-                            log.warning("document exceeds max size, truncating: %s", url)
-                            break
-                    return FetchedContent(
-                        url=url, final_url=str(resp.url), status=resp.status_code,
-                        content_type=resp.headers.get("content-type", ""),
-                        body=bytes(body),
-                    )
+                current_url = url
+                for _ in range(self.MAX_REDIRECTS):
+                    with client.stream("GET", current_url) as resp:
+                        if resp.status_code in (301, 302, 307, 308):
+                            location = resp.headers.get("location")
+                            if not location:
+                                break
+                            redirect_url = urljoin(current_url, location)
+                            # Re-validate each hop's host before following.
+                            self.policy.require(urlparse(redirect_url).hostname or "", "redirect")
+                            current_url = redirect_url
+                            continue
+                        body = bytearray()
+                        for chunk in resp.iter_bytes(chunk_size=65536):
+                            body.extend(chunk)
+                            if len(body) > self.max_bytes:
+                                log.warning("document exceeds max size, truncating: %s", current_url)
+                                break
+                        return FetchedContent(
+                            url=url, final_url=str(resp.url), status=resp.status_code,
+                            content_type=resp.headers.get("content-type", ""),
+                            body=bytes(body),
+                        )
+            # Exhausted the redirect budget or a redirect without a Location.
+            return FetchedContent(url=url, status=0, error="too many redirects")
         except httpx.HTTPStatusError as exc:
             # non-retryable statuses fail fast; retryable ones re-raise for backoff
             code = exc.response.status_code
