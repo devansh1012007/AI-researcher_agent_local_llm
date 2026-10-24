@@ -46,20 +46,20 @@ Orchestrator-owned; source of truth for resume. Updated at every wave boundary.
 - Status: COMPLETE
 
 ### Wave 2 — C09 egress enforcement (8 agents, parallel)
-- WAVE_BASE_SHA: <to be set at dispatch>
-- Agents: W2-IMPL-05..12 (T-005..T-012)
+- WAVE_BASE_SHA: 29112d1
+- Agents: W2-IMPL-05..12 (T-005..T-012), W2-IMPR-01 (improvement), W2-DREV-01/02 (delta review)
 - Ownership file: ownership/W2.tsv
-- Pre-mortem: T-005 changes `build_provider` signature (contract change). All other W2 agents depend on T-005's new `policy` param but do NOT call `build_provider` directly — they add `policy.allows()/require()` inside their own provider files. Risk: if T-005's `policy` param default isn't `None`-safe, existing callers of `build_provider` (only `ModelRouter.for_role`) break. Mitigation: `policy: EgressPolicy | None = None` default; `ModelRouter` passes the policy.
-- Gate results: <pending>
-- Review findings → dispositions: <pending>
-- Review/improve cycles used: 0/2
-- Status: pending dispatch
+- Pre-mortem: T-005 changes `build_provider` signature (contract change). All other W2 agents depend on T-005's new `policy` param. C2 contract risk mitigated by `policy: EgressPolicy | None = None` convention.
+- Gate results: full pytest 409 passed/1 skipped (baseline 378/1 → +31 tests incl. 24 egress), mutation_check M-1..M-19 DETECTED exit 0, reaudit 14/14 fixed (with conftest LOCAL_ONLY=false pin). All green.
+- Review findings → dispositions: W2-REV-01 APPROVE-WITH-CHANGES — F-1 (unused import, MINOR) FIXED by W2-IMPR-01; F-2 (dead HTTPStatusError/lost 429-503 retry, MAJOR) FIXED; F-3 (duckduckgo follow_redirects=True bypasses per-hop validation, MAJOR) FIXED. W2-REV-02 APPROVE-WITH-CHANGES — test gap BLOCKER FIXED by W2-IMPR-01 (24 egress enforcement tests). Delta reviews W2-DREV-01/02: APPROVE.
+- Review/improve cycles used: 1/2
+- Status: COMPLETE
 
 ### Wave 3 — W4 sandbox guard (2 agents, parallel)
-- WAVE_BASE_SHA: <to be set at dispatch>
+- WAVE_BASE_SHA: 46cea2e
 - Agents: W3-IMPL-12 (T-013), W3-IMPL-13 (T-014)
 - Ownership file: ownership/W3.tsv
-- Pre-mortem: T-012 rewrites the sandbox guard; T-013 adds a test that exercises it. Risk: T-013's test may not run without the shared env (needs `exec()` sandbox); mark NOT-RUN if needed.
+- Pre-mortem: T-013 rewrites the sandbox guard; T-014 adds a test that exercises it. Risk: T-014's test may not run without the shared env (needs `exec()` sandbox); mark NOT-RUN if needed.
 - Gate results: <pending>
 - Review findings → dispositions: <pending>
 - Review/improve cycles used: 0/2
