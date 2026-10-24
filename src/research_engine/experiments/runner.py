@@ -25,48 +25,16 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from research_engine.core.config import AppConfig
+from research_engine.experiments._sandbox_guard import _guard
 from research_engine.security.permissions import PathSandbox
 
 # Runs INSIDE the child process first (via -c wrapper).
 # Audit-hook sandbox: denies networking/subprocesses and contains file
 # WRITES to the experiment workdir (reads stay open so imports work).
-_SANDBOX_GUARD = r"""
-import os as _os
-import sys as _sys
-
-_ALLOWED_WRITE_ROOT = _os.environ.get("GAR_EXPERIMENT_WORKDIR", "")
-_DENY_NET = _os.environ.get("GAR_EXPERIMENT_NETWORK", "") != "1"
-
-def _guard(event, args):
-    if _DENY_NET and event in ("socket.connect", "socket.getaddrinfo",
-                               "socket.bind"):
-        raise PermissionError(
-            "network access disabled by experiment sandbox")
-    if event == "subprocess.Popen":
-        raise PermissionError(
-            "process spawning disabled by experiment sandbox")
-    if event == "open" and len(args) >= 3:
-        path, mode, flags = args[0], args[1], args[2]
-        if not isinstance(path, (str, bytes, _os.PathLike)):
-            return
-        writable_flags = (_os.O_WRONLY | _os.O_RDWR | _os.O_CREAT |
-                          _os.O_APPEND | _os.O_TRUNC)
-        try:
-            is_write = bool(flags & writable_flags) or any(
-                c in str(mode) for c in ("w", "a", "+", "x"))
-        except TypeError:
-            is_write = False
-        if is_write and _ALLOWED_WRITE_ROOT:
-            p = _os.path.abspath(
-                path.decode() if isinstance(path, bytes) else str(path))
-            root = _os.path.abspath(_ALLOWED_WRITE_ROOT)
-            if not p.startswith(root + _os.sep) and p != root:
-                raise PermissionError(
-                    f"write outside experiment sandbox denied: {p}")
-
-_sys.addaudithook(_guard)
-"""
-
+# The guard is imported from experiments/_sandbox_guard: its write root and
+# deny-net flag are default arguments bound at definition time (module
+# import in the child), so user code executed via exec() cannot rebind them
+# to escape the sandbox (see W4 / P0-5 fix).
 _RUNNER_TEMPLATE = """
 import json, sys, os
 sys.argv = [{argv!r}]
@@ -159,8 +127,10 @@ class LocalExperimentRunner:
 
         preexec = self._limits(mem_bytes, cpu_s) if sys.platform == "linux" else None
         cmd = [sys.executable, "-I", "-c",
-               _SANDBOX_GUARD +
-               _RUNNER_TEMPLATE.format(entry=str(entry), argv=f"experiment.py")]
+               "from research_engine.experiments._sandbox_guard import _guard\n"
+               "import sys as _sys\n"
+               "_sys.addaudithook(_guard)\n"
+               + _RUNNER_TEMPLATE.format(entry=str(entry), argv=f"experiment.py")]
         child_env = self._child_env()
         child_env["GAR_EXPERIMENT_WORKDIR"] = str(workdir)
         if network_on:
