@@ -4,9 +4,11 @@ from __future__ import annotations
 import logging
 import re
 import xml.etree.ElementTree as ET
+from urllib.parse import urlparse
 
 import httpx
 
+from research_engine.core.http_policy import EgressPolicy
 from research_engine.providers.academic.base import AcademicProvider, clean_query
 from research_engine.providers.search.base import RawSearchHit, SearchProviderError
 
@@ -19,13 +21,16 @@ class ArxivProvider(AcademicProvider):
     name = "arxiv"
     BASE = "https://export.arxiv.org/api/query"
 
-    def __init__(self, timeout: float = 25.0):
+    def __init__(self, timeout: float = 25.0, policy: EgressPolicy | None = None):
         self.timeout = timeout
+        self.policy = policy
 
     def search(self, query: str, max_results: int = 10) -> list[RawSearchHit]:
         # arXiv prefers fielded queries; raw text usually works in all: mode
         q = clean_query(query)
         try:
+            if self.policy is not None:
+                self.policy.require(urlparse(self.BASE).hostname, "arxiv search")
             resp = httpx.get(self.BASE, params={
                 "search_query": f"all:{q}",
                 "start": 0,

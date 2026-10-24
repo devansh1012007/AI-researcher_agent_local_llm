@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 import logging
+from urllib.parse import urlparse
 
 import httpx
 
+from research_engine.core.http_policy import EgressPolicy
 from research_engine.providers.academic.base import AcademicProvider, clean_query
 from research_engine.providers.search.base import RawSearchHit, SearchProviderError
 
@@ -17,13 +19,17 @@ class SemanticScholarProvider(AcademicProvider):
     name = "semantic_scholar"
     BASE = "https://api.semanticscholar.org/graph/v1"
 
-    def __init__(self, api_key: str = "", timeout: float = 20.0):
+    def __init__(self, api_key: str = "", timeout: float = 20.0, policy: EgressPolicy | None = None):
         self.timeout = timeout
         self.headers = {"x-api-key": api_key} if api_key else {}
+        self.policy = policy
 
     def search(self, query: str, max_results: int = 10) -> list[RawSearchHit]:
         try:
-            resp = httpx.get(f"{self.BASE}/paper/search", params={
+            url = f"{self.BASE}/paper/search"
+            if self.policy is not None:
+                self.policy.require(urlparse(url).hostname, "semantic_scholar search")
+            resp = httpx.get(url, params={
                 "query": clean_query(query), "limit": min(max_results, 100), "fields": _FIELDS,
             }, headers=self.headers, timeout=self.timeout)
             if resp.status_code == 429:
