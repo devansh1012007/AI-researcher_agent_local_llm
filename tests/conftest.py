@@ -33,7 +33,7 @@ os.environ["GAR_EMBEDDINGS__PROVIDER"] = "hashing"
 # gar.yaml (AGENTS.md §3). W2 C09 egress enforcement consults the policy on
 # every fetch; without this pin, a developer's gar.yaml with
 # platform.security.local_only: true would block offline tests.
-os.environ["GAR_SECURITY__LOCAL_ONLY"] = "false"
+os.environ["GAR_PLATFORM__SECURITY__LOCAL_ONLY"] = "false"
 
 from fakes import (FakeAcademicProvider, FakeSearchProvider, ScriptedLLM,
                    make_fake_transport)  # noqa: E402
