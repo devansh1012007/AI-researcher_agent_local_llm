@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 import logging
+from urllib.parse import urlparse
 
 import httpx
 
+from research_engine.core.http_policy import EgressPolicy
 from research_engine.providers.academic.base import AcademicProvider, clean_query
 from research_engine.providers.search.base import RawSearchHit, SearchProviderError
 
@@ -15,14 +17,18 @@ class OpenAlexProvider(AcademicProvider):
     name = "openalex"
     BASE = "https://api.openalex.org"
 
-    def __init__(self, timeout: float = 20.0):
+    def __init__(self, timeout: float = 20.0, policy: EgressPolicy | None = None):
         self.timeout = timeout
+        self.policy = policy
         # polite pool: contact email improves rate limits; generic value is fine
         self.params = {"mailto": "gar-local-research@example.org"}
 
     def search(self, query: str, max_results: int = 10) -> list[RawSearchHit]:
         try:
-            resp = httpx.get(f"{self.BASE}/works", params={
+            url = f"{self.BASE}/works"
+            if self.policy is not None:
+                self.policy.require(urlparse(url).hostname, "openalex search")
+            resp = httpx.get(url, params={
                 **self.params,
                 "search": clean_query(query),
                 "per-page": min(max_results, 50),

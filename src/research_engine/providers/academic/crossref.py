@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 import logging
+from urllib.parse import urlparse
 
 import httpx
 
+from research_engine.core.http_policy import EgressPolicy
 from research_engine.providers.academic.base import AcademicProvider, clean_query
 from research_engine.providers.search.base import RawSearchHit, SearchProviderError
 
@@ -15,13 +17,17 @@ class CrossrefProvider(AcademicProvider):
     name = "crossref"
     BASE = "https://api.crossref.org"
 
-    def __init__(self, timeout: float = 20.0):
+    def __init__(self, timeout: float = 20.0, policy: EgressPolicy | None = None):
         self.timeout = timeout
+        self.policy = policy
         self.headers = {"User-Agent": "GAR-ResearchBot/0.1 (mailto:gar-local-research@example.org)"}
 
     def search(self, query: str, max_results: int = 10) -> list[RawSearchHit]:
         try:
-            resp = httpx.get(f"{self.BASE}/works", params={
+            url = f"{self.BASE}/works"
+            if self.policy is not None:
+                self.policy.require(urlparse(url).hostname, "crossref search")
+            resp = httpx.get(url, params={
                 "query.bibliographic": clean_query(query),
                 "rows": min(max_results, 50),
                 "select": "DOI,title,author,issued,container-title,abstract,URL,is-referenced-by-count,type",
