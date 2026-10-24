@@ -16,6 +16,37 @@ from evals.metrics.eval_metrics import score_project
 from evals.runners.run_eval import load_tasks, run_offline
 
 
+def test_duplicate_rate_zero_when_rejections_no_duplicates(tmp_path):
+    """C18 P1 edge case: rejections present but NO duplicates → duplicate_rate == 0.0.
+
+    Most discriminating scenario for the old `duplicate_rate = rejected_ratio`
+    mislabeling: with 1 REJECTED row and 2 accepted rows carrying distinct quotes,
+    rejected_ratio == 1/3 while duplicate_ratio == 0.0 (REJECTED rows are excluded
+    from duplicate_ratio, which is accepted-only). A buggy implementation returning
+    rejected_ratio as duplicate_rate yields 1/3 != 0.0 → this test catches it.
+    Rejections present but no duplicates is NOT covered by the existing C18 fixture
+    (which has zero rejections), so a bug that only mislabels when rejections exist
+    would slip through without this case.
+    """
+    db = Database(tmp_path / "t.sqlite")
+    repos = Repositories(db)
+    pid = "p-dup-zero"
+
+    repos.evidence.save(Evidence(project_id=pid, claim_text="c1", quote="rejected quote",
+                                 source_id="s1", status=EvidenceStatus.REJECTED, iteration=1))
+    repos.evidence.save(Evidence(project_id=pid, claim_text="c2", quote="one distinct quote",
+                                 source_id="s2", status=EvidenceStatus.SUPPORTED, iteration=2))
+    repos.evidence.save(Evidence(project_id=pid, claim_text="c3", quote="another distinct quote",
+                                 source_id="s3", status=EvidenceStatus.SUPPORTED, iteration=3))
+
+    assert abs(repos.evidence.rejected_ratio(pid) - (1 / 3)) < 1e-9
+    assert repos.evidence.duplicate_ratio(pid) == 0.0
+
+    s = score_project(repos, pid)
+    assert s.duplicate_rate == 0.0
+    assert s.duplicate_rate != repos.evidence.rejected_ratio(pid)
+
+
 def test_golden_tasks_offline_gates(tmp_path):
     tasks = load_tasks(ROOT / "evals/datasets/golden_tasks.json")
     assert len(tasks) >= 5
