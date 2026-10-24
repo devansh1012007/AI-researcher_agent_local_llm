@@ -18,10 +18,11 @@ Orchestrator-owned; source of truth for resume. Updated at every wave boundary.
 
 | Task | Plan items | Domain | Class | Root cause (1 line) | Write-set | Contract-set | Depends on | Wave | Agent | Status | Code commits | Report |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
-| T-001 | C18 | evals/metrics | SURFACE | `eval_metrics.py:75` sets `duplicate_rate = rejected_ratio`, not true `duplicate_ratio` | `evals/metrics/eval_metrics.py` | `EvalScores.duplicate_rate` semantics | — | W1 | W1-IMPL-01 | pending | | |
-| T-002 | C19 | docs | SURFACE | INV-029 missing from invariants table; review op missing from canonical ops list | `docs/invariants.md`, `docs/service-boundaries.md` | INV table, service-boundaries ops list | — | W1 | W1-IMPL-02 | pending | | |
-| T-003 | W5 | scripts/mutation_check | SURFACE | No ULID mutation; M-1..M-18 don't cover `core/ids.py` | `scripts/mutation_check.py` | MUTATIONS list | T-001 (mutation harness pattern known) | W1 | W1-IMPL-03 | pending | | |
-| T-004 | W6 | core/config | SURFACE | `local_only` field defined but never read; no LOCAL_ONLY gating test | `src/research_engine/core/config.py`, new test file | `effective_environment()` contract | — | W1 | W1-IMPL-04 | pending | | |
+| T-001 | C18 | evals/metrics | SURFACE | `eval_metrics.py:75` sets `duplicate_rate = rejected_ratio`, not true `duplicate_ratio` | `evals/metrics/eval_metrics.py` | `EvalScores.duplicate_rate` semantics | — | W1 | W1-IMPL-01 | DONE | 8f5b667 / 979e6ae | reports/w1-impl/W1-IMPL-01-T-001.md |
+| T-002 | C19 | docs | SURFACE | INV-029 missing from invariants table; review op missing from canonical ops list | `docs/invariants.md`, `docs/service-boundaries.md` | INV table, service-boundaries ops list | — | W1 | W1-IMPL-02 | DONE | f77eff4 / 1628632 | reports/w1-impl/W1-IMPL-02-T-002.md |
+| T-003 | W5 | scripts/mutation_check | SURFACE | No ULID mutation; M-1..M-18 don't cover `core/ids.py` | `scripts/mutation_check.py` | MUTATIONS list | T-001 (mutation harness pattern known) | W1 | W1-IMPL-03 | DONE | 1d78e04 / 1e54457 | reports/w1-impl/W1-IMPL-03-T-003.md |
+| T-004 | W6 | core/config | SURFACE | `local_only` field defined but never read; no LOCAL_ONLY gating test | `src/research_engine/core/config.py`, new test file | `effective_environment()` contract | — | W1 | W1-IMPL-04 | DONE | 8380eaa / 1cc443d | reports/w1-impl/W1-IMPL-04-T-004.md |
+| T-005 (impr) | W1-REV-02 P1 | evals/metrics (test) | SURFACE | C18 missing "rejections present, no duplicates" edge case | `tests/evaluation/test_eval_framework.py` | None | T-001 | W1 | W1-IMPR-01 | DONE | 0d1636b / fa68a91 | reports/w1-improve/W1-IMPR-01-T-005.md |
 | T-005 | C09 part A | providers/llm/router.py | SURFACE | `build_provider` takes no `policy` param | `src/research_engine/providers/llm/router.py` | `build_provider(cfg, policy)` signature | — | W2 | W2-IMPL-05 | pending | | |
 | T-006 | C09 part B | providers/academic/* | SURFACE | 4 academic `httpx.get` sites don't consult EgressPolicy | `providers/academic/openalex.py`, `crossref.py`, `arxiv.py`, `semantic_scholar.py` | None (internal call sites) | T-005 | W2 | W2-IMPL-06 | pending | | |
 | T-007 | C09 part C | providers/search/duckduckgo.py | SURFACE | 3 `httpx.get/post` sites don't consult EgressPolicy | `providers/search/duckduckgo.py` | None | T-005 | W2 | W2-IMPL-07 | pending | | |
@@ -35,14 +36,14 @@ Orchestrator-owned; source of truth for resume. Updated at every wave boundary.
 ## Waves
 
 ### Wave 1 — Small issues (4 agents, parallel)
-- WAVE_BASE_SHA: <to be set at dispatch>
-- Agents: W1-IMPL-01 (T-001), W1-IMPL-02 (T-002), W1-IMPL-03 (T-003), W1-IMPL-04 (T-004)
+- WAVE_BASE_SHA: cd6b948
+- Agents: W1-IMPL-01 (T-001), W1-IMPL-02 (T-002), W1-IMPL-03 (T-003), W1-IMPL-04 (T-004), W1-IMPR-01 (improvement)
 - Ownership file: ownership/W1.tsv
-- Pre-mortem: All four tasks touch disjoint files; no conflicts expected. Only shared resource is `scripts/mutation_check.py` (T-003) — no other agent touches it. Risk: T-004 `effective_environment()` change could affect provider registration tests; mitigated by T-004 only adding `local_only` as an additional fail-closed condition.
-- Gate results: <pending>
-- Review findings → dispositions: <pending>
-- Review/improve cycles used: 0/2
-- Status: pending dispatch
+- Pre-mortem: All four tasks touch disjoint files; no conflicts occurred. T-004 `effective_environment()` change did not affect provider registration tests (mitigated by fail-closed design).
+- Gate results: full pytest 385 passed/1 skipped (baseline 378/1 → +7 tests), mutation_check M-1..M-19 DETECTED exit 0, reaudit 14/14 fixed. All green.
+- Review findings → dispositions: W1-REV-01 (code) APPROVE, no findings; W1-REV-02 (test) APPROVE-WITH-CHANGES — P1 missing C18 edge case → FIXED by W1-IMPR-01 (added `test_duplicate_rate_zero_when_rejections_no_duplicates`); P2/P3 W6 cases → DEFERRED (additive coverage, not defects)
+- Review/improve cycles used: 1/2
+- Status: COMPLETE
 
 ### Wave 2 — C09 egress enforcement (8 agents, parallel)
 - WAVE_BASE_SHA: <to be set at dispatch>
