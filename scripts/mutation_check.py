@@ -150,6 +150,16 @@ MUTATIONS = [
                                        if h.url.startswith(("http://", "https://"))})''',
      '''                q.results_count = len(hits)''',
      "tests/unit/test_stage1_dead_legs.py::TestLegOutcomes::test_the_persisted_query_row_carries_the_count_and_the_outcomes"),
+
+    # C07: next_id() must stay monotonic so two processes never mint the same
+    # id; the same-millisecond increment is what makes ids unique within one
+    # millisecond. Resetting the random component breaks uniqueness there.
+    ("M-19", "src/research_engine/core/ids.py",
+     '''            _last_random += 1
+            if _last_random >= _RANDOM_LIMIT:''',
+     '''            _last_random = 0
+            if _last_random >= _RANDOM_LIMIT:''',
+     "tests/unit/test_stage1_dead_legs.py::TestUlidIds"),
 ]
 
 
