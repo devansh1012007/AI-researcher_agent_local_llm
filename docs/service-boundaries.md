@@ -20,5 +20,5 @@ Rules:
 
 Canonical operations (one path each): create/run/pause/resume projects,
 ask/query, generate hypotheses (mode-aware), design methodology,
-approve experiment, add result, startup discover/validate/diligence/
-assumptions/next.
+approve experiment, add result, record review decision,
+startup discover/validate/diligence/assumptions/next.
