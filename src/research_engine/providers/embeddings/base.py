@@ -12,8 +12,19 @@ from __future__ import annotations
 import hashlib
 import math
 from abc import ABC, abstractmethod
+from urllib.parse import urlparse
 
 import httpx
+
+from research_engine.core.http_policy import EgressPolicy
+
+
+def _host_of(base_url: str) -> str:
+    """Extract the host from a base URL, failing closed if unparseable."""
+    host = urlparse(base_url).hostname
+    if host is None:
+        raise RuntimeError(f"cannot determine host from {base_url!r}")
+    return host
 
 
 class EmbeddingProvider(ABC):
@@ -67,13 +78,18 @@ class OllamaEmbeddingProvider(EmbeddingProvider):
     name = "ollama"
 
     def __init__(self, model: str = "nomic-embed-text",
-                 base_url: str = "http://localhost:11434", timeout: float = 60.0):
+                 base_url: str = "http://localhost:11434", timeout: float = 60.0,
+                 policy: EgressPolicy | None = None):
         self.model = model
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
+        self.policy = policy
         self.dim = 768  # nomic-embed-text default; verified on first call
 
     def embed(self, text: str) -> list[float]:
+        host = _host_of(self.base_url)
+        if self.policy is not None:
+            self.policy.require(host, "ollama embed")
         resp = httpx.post(f"{self.base_url}/api/embeddings",
                           json={"model": self.model, "prompt": text[:4000]},
                           timeout=self.timeout)
@@ -84,6 +100,9 @@ class OllamaEmbeddingProvider(EmbeddingProvider):
 
     def is_available(self) -> bool:
         try:
+            host = _host_of(self.base_url)
+            if self.policy is not None:
+                self.policy.require(host, "ollama embed")
             httpx.get(f"{self.base_url}/api/tags", timeout=2.0)
             return True
         except httpx.HTTPError:
@@ -94,15 +113,20 @@ class OpenAICompatibleEmbeddingProvider(EmbeddingProvider):
     name = "openai_compatible"
 
     def __init__(self, model: str, base_url: str = "http://localhost:8000/v1",
-                 api_key: str = "", timeout: float = 60.0):
+                 api_key: str = "", timeout: float = 60.0,
+                 policy: EgressPolicy | None = None):
         self.model = model
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self.timeout = timeout
+        self.policy = policy
         self.dim = 0
 
     def embed(self, text: str) -> list[float]:
         headers = {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
+        host = _host_of(self.base_url)
+        if self.policy is not None:
+            self.policy.require(host, "openai embed")
         resp = httpx.post(f"{self.base_url}/embeddings", json={"model": self.model,
                           "input": text[:6000]}, headers=headers or None,
                           timeout=self.timeout)
@@ -113,6 +137,9 @@ class OpenAICompatibleEmbeddingProvider(EmbeddingProvider):
 
     def is_available(self) -> bool:
         try:
+            host = _host_of(self.base_url)
+            if self.policy is not None:
+                self.policy.require(host, "openai embed")
             httpx.get(self.base_url, timeout=2.0)
             return True
         except httpx.HTTPError:
