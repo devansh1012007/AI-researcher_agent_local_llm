@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 
 from research_engine.core.budget import Budget
 from research_engine.core.config import AppConfig
-from research_engine.core.http_policy import build_egress_policy
+from research_engine.core.http_policy import EgressPolicy, build_egress_policy
 from research_engine.core.state_machine import StateMachine
 from research_engine.models.enums import (
     ProjectState, ReviewGate, StopReason, TaskStatus, TaskType,
@@ -663,15 +663,15 @@ def build_default_registry(cfg: AppConfig) -> ProviderRegistry:
     from research_engine.providers.search.duckduckgo import DuckDuckGoProvider, SearxngProvider
     timeout = cfg.network.timeout_seconds
     if cfg.search.web_provider == "duckduckgo":
-        reg.register_search("web", DuckDuckGoProvider(timeout=timeout))
+        reg.register_search("web", DuckDuckGoProvider(timeout=timeout, policy=policy))
     elif cfg.search.web_provider == "searxng" and cfg.search.searxng_base_url:
-        reg.register_search("web", SearxngProvider(cfg.search.searxng_base_url, timeout))
+        reg.register_search("web", SearxngProvider(cfg.search.searxng_base_url, timeout, policy=policy))
     # web_provider == "none" -> offline: no web search registered (#98/#100)
     providers = {
-        "openalex": OpenAlexProvider(timeout=timeout),
-        "crossref": CrossrefProvider(timeout=timeout),
-        "arxiv": ArxivProvider(timeout=timeout),
-        "semantic_scholar": SemanticScholarProvider(cfg.search.semantic_scholar_api_key, timeout),
+        "openalex": OpenAlexProvider(timeout=timeout, policy=policy),
+        "crossref": CrossrefProvider(timeout=timeout, policy=policy),
+        "arxiv": ArxivProvider(timeout=timeout, policy=policy),
+        "semantic_scholar": SemanticScholarProvider(cfg.search.semantic_scholar_api_key, timeout, policy=policy),
     }
     for name in cfg.search.academic_providers:
         if name in providers:
