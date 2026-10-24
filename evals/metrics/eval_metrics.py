@@ -72,7 +72,7 @@ def score_project(repos: Repositories, project_id: str,
     evidence = repos.evidence.all(project_id)
     ok_ev = [e for e in evidence if e.status.value != "REJECTED"]
     s.rejected_evidence_ratio = (len(evidence) - len(ok_ev)) / len(evidence) if evidence else 0.0
-    s.duplicate_rate = repos.evidence.rejected_ratio(project_id)
+    s.duplicate_rate = repos.evidence.duplicate_ratio(project_id)
 
     from research_engine.pipeline.evidence import verify_quote
     checked = failed = 0
