@@ -1,38 +1,31 @@
-"""Override-write regression test for the sandbox guard (W3-IMPL-13, T-014).
+"""Regression test for write-root rebinding in the experiment sandbox.
 
-Verifies that experiment code rebinding globals()["_ALLOWED_WRITE_ROOT"]
-cannot escape the sandbox write containment — the W3-IMPL-12 fix binds the
-write root at definition time (default argument), so rebinding the global is
-a no-op and any write outside the workdir is denied.
-
-This test MUST fail against the unfixed guard (rebinding works -> write
-succeeds -> status COMPLETED, file exists) and PASS after W3-IMPL-12's fix
-is applied (PermissionError -> status FAILED, file absent).
+The target is unique to this test and outside the experiment's work directory.
+The attack resets the old guard's global write root to the target's parent.
+Against the vulnerable guard the write succeeds and this test fails; with the
+fixed guard, whose root is captured in the audit-hook function defaults, the
+write is refused before the file is created.
 """
 from __future__ import annotations
 
-from pathlib import Path
-
-import pytest
-
 from research_engine.experiments.runner import LocalExperimentRunner
 
-OVERRIDE_CODE = (
-    "globals()[\"_ALLOWED_WRITE_ROOT\"] = \"/tmp\"\n"
-    "with open(\"/tmp/escape_test.txt\", \"w\") as fh:\n"
-    "    fh.write(\"escape\")\n"
-)
 
-
-def test_sandbox_override_write_cannot_rebind_write_root(platform_ctx):
+def test_sandbox_override_write_cannot_rebind_write_root(platform_ctx, tmp_path):
     runner = LocalExperimentRunner(platform_ctx.cfg)
-    target = Path("/tmp/escape_test.txt")
-    if target.exists():
-        target.unlink()
-    ex = runner.execute(
-        "proj_sbx_override_write",
-        {"code": OVERRIDE_CODE, "timeout_seconds": 15},
+    target = tmp_path / "escape.txt"
+    attack_root = str(tmp_path)
+    code = (
+        f'globals()["_ALLOWED_WRITE_ROOT"] = {attack_root!r}\n'
+        f'with open({str(target)!r}, "w") as fh:\n'
+        "    fh.write('escape')\n"
     )
-    assert ex.status == "FAILED", ex.stderr
-    assert "sandbox" in ex.stderr or "PermissionError" in ex.stderr, ex.stderr
-    assert not target.exists()
+
+    execution = runner.execute(
+        "proj_sbx_override_write",
+        {"code": code, "timeout_seconds": 15},
+    )
+
+    assert execution.status == "FAILED", execution.stderr
+    assert "sandbox" in execution.stderr.lower() or "PermissionError" in execution.stderr, execution.stderr
+    assert not target.exists(), "the sandbox escape target must not be created"
