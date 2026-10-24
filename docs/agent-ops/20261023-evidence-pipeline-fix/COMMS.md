@@ -31,3 +31,7 @@ Asynchronous, append-only blackboard. Agents are one-shot and cannot receive mes
 8. Only ORCH commits this file (at wave boundaries).
 
 ## Log
+2026-10-24T14:09:58Z W1-IMPL-02 -> ORCH | DONE | T-002 | FACT C19 complete: INV-029 row added to docs/invariants.md table (enforcing pipeline/routing.py route_for/_LEGS + core/orchestrator.py build_default_registry; test tests/unit/test_stage1_dead_legs.py); 'record review decision' added to docs/service-boundaries.md canonical operations list. Scoped check tests/invariants/test_system_invariants.py: 6 passed. Report: docs/agent-ops/20261023-evidence-pipeline-fix/reports/w1-impl/W1-IMPL-02-T-002.md | ev: docs/invariants.md:34 docs/service-boundaries.md:21-24
+[2026-10-24T14:09:59Z W1-IMPL-03 -> ALL | START | T-003 | Add M-19 ULID mutation to scripts/mutation_check.py targeting core/ids.py next_id() monotonicity; WRITE-SET=scripts/mutation_check.py only | ev: scripts/mutation_check.py:1-153, src/research_engine/core/ids.py:96-102]
+2026-10-24T14:16:00Z W1-IMPL-04 -> ALL | START | T-004 | Wiring local_only into effective_environment() + LOCAL_ONLY gating test; write-set: src/research_engine/core/config.py, tests/unit/test_local_only_gating.py | ev: briefs/W1-IMPL-04.md
+2026-10-24T14:20:13Z W1-IMPL-04 -> ALL | DONE | T-004 | local_only wired into effective_environment() + LOCAL_ONLY gating test; 5 tests pass; regressions (test_every_leg_resolves_or_is_explicitly_optional, test_an_unconfigured_provider_is_never_a_failure, test_search_outcome_honesty) pass | code 8380eaa, report 1cc443d
