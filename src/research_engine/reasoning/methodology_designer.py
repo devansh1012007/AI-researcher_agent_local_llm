@@ -12,8 +12,10 @@ import logging
 from pydantic import BaseModel
 
 from research_engine.models.reasoning import Experiment, Hypothesis, Methodology
+from research_engine.platform.errors import classify
+from research_engine.platform.obs_logging import redact
 from research_engine.prompts.registry import get_prompt
-from research_engine.providers.llm.base import LLMProvider
+from research_engine.providers.llm.base import LLMError, LLMProvider
 from research_engine.storage.reasoning_repos import ReasoningRepos
 from research_engine.storage.repositories import Repositories
 
@@ -53,6 +55,13 @@ class MethodologyDesigner:
         self.repos = repos
         self.rrepos = rrepos
         self.provider = provider
+        self.last_outcome: dict = {
+            "status": "unconfigured" if provider is None else "idle",
+            "provider": getattr(getattr(provider, "cfg", None), "provider", "none"),
+            "error_category": "",
+            "reason": "",
+            "fallback_used": False,
+        }
 
     def design(self, project_id: str, h: Hypothesis,
                constraints: dict | None = None) -> list[Methodology]:
@@ -167,28 +176,55 @@ class MethodologyDesigner:
         return "\n".join(f"- {c.text[:130]}" for c in claims) or "(no claims)"
 
     def _llm_design(self, h: Hypothesis, context: str) -> dict[str, dict]:
+        prov_name = getattr(getattr(self.provider, "cfg", None), "provider", "none")
         if self.provider is None:
+            self.last_outcome = {
+                "status": "unconfigured",
+                "provider": "none",
+                "error_category": "",
+                "reason": "no LLM provider configured; deterministic fallback used",
+                "fallback_used": True,
+            }
             return {}
-        spec = get_prompt("query_generator")  # generic JSON-discipline system prompt
-        user = (f"Hypothesis [{h.type}]: {h.statement}\n"
-                f"Predictions: {h.predictions}\nFalsifiers: {h.falsification_conditions}\n"
-                f"Related claims:\n{context}\n\n"
-                'Design THREE methodologies (tiers cheap_fast, balanced, high_rigor). '
-                'For each: concrete dataset, variables, metrics tied to predictions, '
-                'procedure steps. Respond ONLY with JSON: '
-                '{"cheap_fast": {...}, "balanced": {...}, "high_rigor": {...}} where each '
-                'value matches {"experiment_kind","objective","independent_vars",'
-                '"dependent_vars","control_vars","dataset","method_summary","metrics",'
-                '"procedure"}')
+        spec = get_prompt("methodology_designer")
+        user = spec.render(
+            hypothesis_type=str(h.type),
+            hypothesis_statement=str(h.statement),
+            predictions=str(h.predictions),
+            falsifiers=str(h.falsification_conditions),
+            context=str(context),
+        )
+
         class MultiOut(BaseModel):
             cheap_fast: dict = {}
             balanced: dict = {}
             high_rigor: dict = {}
+
         try:
             out, errors = self.provider.structured(spec.system, user, MultiOut, max_attempts=2)
-        except Exception:
+        except (LLMError, RuntimeError, OSError, ValueError) as exc:
+            cat = classify(exc).value
+            safe_reason = redact(str(exc))[:200]
+            log.warning(
+                "methodology_designer provider %s failed (%s): %s",
+                prov_name, cat, safe_reason,
+            )
+            self.last_outcome = {
+                "status": "provider_failed",
+                "provider": prov_name,
+                "error_category": cat,
+                "reason": safe_reason,
+                "fallback_used": True,
+            }
             return {}
         if out is None:
+            self.last_outcome = {
+                "status": "invalid_output",
+                "provider": prov_name,
+                "error_category": "VALIDATION",
+                "reason": "; ".join(errors)[:200],
+                "fallback_used": True,
+            }
             return {}
         clean = {}
         for tier in TIERS:
@@ -196,6 +232,22 @@ class MethodologyDesigner:
             if isinstance(d, dict) and d.get("method_summary"):
                 d.setdefault("metrics", [])
                 clean[tier] = d
+        if not clean:
+            self.last_outcome = {
+                "status": "empty_output",
+                "provider": prov_name,
+                "error_category": "",
+                "reason": "model returned no populated methodology tiers",
+                "fallback_used": True,
+            }
+            return {}
+        self.last_outcome = {
+            "status": "ok",
+            "provider": prov_name,
+            "error_category": "",
+            "reason": "",
+            "fallback_used": False,
+        }
         return clean
 
     # -- comparison ------------------------------------------------------------

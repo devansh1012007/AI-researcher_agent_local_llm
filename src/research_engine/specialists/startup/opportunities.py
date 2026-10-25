@@ -114,6 +114,13 @@ class OpportunityEngine:
                     if not any(seg["name"] in (a.used_by_segments or [])
                                for a in alternatives.values())]
         if strong_funding and unserved and len(pains) >= 2:
+            # P3-7: derive P4 strength deterministically from funding signal strength,
+            # linked pain hierarchy weight, and unserved segment evidence density
+            # (never a magic constant). Capped below P1/P2/P3 behavioral ceilings (<= 0.65).
+            sig_weight = 0.35 if strong_funding[0].get("strength") == "STRONG" else 0.22
+            pain_weight = float(pains[0].get("hierarchy_weight", 0.2)) * 0.35
+            seg_ev_bonus = min(0.12, 0.04 * len(unserved[0].get("evidence_ids", [])))
+            p4_strength = round(min(0.65, max(0.25, sig_weight + pain_weight + seg_ev_bonus)), 3)
             patterns.append({
                 "pattern": "P4_attention_signal_unserved_segment",
                 "pain": pains[0]["statement"][:220],
@@ -121,7 +128,7 @@ class OpportunityEngine:
                             + unserved[0]["evidence_ids"][:2]),
                 "unmet_need": (f"capital/attention flowing into the space while segment "
                                f"'{unserved[0]['name']}' remains visibly unserved"),
-                "strength": 0.45,
+                "strength": p4_strength,
             })
         patterns.sort(key=lambda x: -x["strength"])
         return patterns

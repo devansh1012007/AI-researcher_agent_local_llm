@@ -129,9 +129,13 @@ class PathSandbox:
         return p
 
     @classmethod
-    def for_data_dir(cls, data_dir: str | Path) -> "PathSandbox":
+    def for_data_dir(cls, data_dir: str | Path,
+                     extra_roots: list[str | Path] | None = None) -> "PathSandbox":
         root = Path(data_dir).resolve()
-        return cls([root])
+        roots: list[str | Path] = [root]
+        if extra_roots:
+            roots.extend(extra_roots)
+        return cls(roots)
 
 
 def _is_relative_to(child: Path, parent: Path) -> bool:

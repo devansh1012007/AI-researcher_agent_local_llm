@@ -16,22 +16,14 @@ import re
 from research_engine.specialists.startup.models import (
     CompetitorProfile, DistributionChannel, PricingPlan)
 from research_engine.specialists.startup.policies import (
-    DISTRIBUTION_CHANNELS, PRICING_MODELS)
+    _AMOUNT_RE, _CURRENCY_BY_SYMBOL, DISTRIBUTION_CHANNELS, PRICING_MODELS,
+    is_magnitude_price as _is_magnitude_price)
 from research_engine.storage.graph_store import GraphStore
 from research_engine.storage.repositories import Repositories
 
 _PERIOD_RE = re.compile(
     r"(?P<period>per month|/mo|monthly|per year|/yr|/year|annual\w*|one[- ]time|"
     r"per user|per seat|usage[- ]based|pay[- ]as[- ]you[- ]go)", re.I)
-_AMOUNT_RE = re.compile(r"(?P<cur>[$₹€£])\s?(?P<amt>\d[\d,]*(?:\.\d+)?)")
-_MAGNITUDE_TAIL_RE = re.compile(r"\s?(?:bn|b|mn|mm|m|million|billion|trillion)(?![a-z])", re.I)
-
-
-def _is_magnitude_price(quote: str, match: re.Match) -> bool:
-    """True when the matched amount is actually a funding/market-size
-    magnitude ($10M, $1.2B, $24 billion) rather than a seat price."""
-    tail = _MAGNITUDE_TAIL_RE.match(quote[match.end():])
-    return bool(tail)
 
 
 def _billing_period(text: str) -> str:
@@ -166,6 +158,9 @@ class CompetitorAnalyzer:
                     continue
                 if ev.id not in prof.evidence_ids and len(prof.evidence_ids) < 15:
                     prof.evidence_ids.append(ev.id)
+                ev_obs = str(ev.published_date or ev.retrieved_at or "")[:10]
+                if ev_obs and (not prof.observed_at or ev_obs > prof.observed_at[:10]):
+                    prof.observed_at = ev_obs
                 low = claim.lower()
                 m = _AMOUNT_RE.search(claim)
                 if m and _PERIOD_RE.search(claim) and \
@@ -210,7 +205,7 @@ class CompetitorAnalyzer:
                 amt = float(m.group("amt").replace(",", ""))
             except ValueError:
                 continue
-            cur = {"$": "USD", "₹": "INR", "€": "EUR", "£": "GBP"}.get(m.group("cur"), "")
+            cur = _CURRENCY_BY_SYMBOL.get(m.group("cur"), "")
             monthly_eq, note = normalize_price(amt, cur, period)
             company = ""
             cm = re.search(r"\b([A-Z][A-Za-z0-9]{2,})\s+(?:charges|costs|offers|pricing|starts? at)",

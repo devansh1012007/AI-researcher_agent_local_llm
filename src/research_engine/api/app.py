@@ -14,7 +14,9 @@ import secrets
 from typing import Any
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
-from fastapi.responses import StreamingResponse
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse, StreamingResponse
+from research_engine.platform.obs_logging import new_trace_id, redact
 from pydantic import BaseModel, Field
 
 from research_engine.core.config import is_loopback_host
@@ -403,26 +405,49 @@ def create_app(ctx: ServiceContext | None = None) -> FastAPI:
     # -------------------------------------------------------------- errors
     @app.exception_handler(NotFoundError)
     async def _nf(_req, exc: NotFoundError):
-        return _json_error(404, "NOT_FOUND", str(exc))
+        return _json_error(404, "NOT_FOUND", str(exc), get_ctx())
 
     @app.exception_handler(ConflictError)
     async def _conflict(_req, exc: ConflictError):
-        return _json_error(409, "CONFLICT", str(exc))
+        return _json_error(409, "CONFLICT", str(exc), get_ctx())
 
     @app.exception_handler(ClassifiedError)
     async def _classified(_req, exc: ClassifiedError):
         code = {"NETWORK": "UPSTREAM_FAILURE", "AUTH": "UNAUTHORIZED"}.get(
             exc.category.value, "SERVICE_ERROR")
         status = {"AUTH": 403}.get(exc.category.value, 502)
-        return _json_error(status, code, str(exc))
+        return _json_error(status, code, str(exc), get_ctx())
+
+    @app.exception_handler(HTTPException)
+    async def _http_exc(_req, exc: HTTPException):
+        detail = exc.detail
+        code = "UNAUTHORIZED" if exc.status_code in (401, 403) else "HTTP_ERROR"
+        msg = str(detail)
+        if isinstance(detail, dict):
+            err_obj = detail.get("error") if isinstance(detail.get("error"), dict) else detail
+            code = str(err_obj.get("code") or code)
+            msg = str(err_obj.get("message") or detail)
+        return _json_error(exc.status_code, code, msg, get_ctx())
+
+    @app.exception_handler(RequestValidationError)
+    async def _val_exc(_req, exc: RequestValidationError):
+        return _json_error(422, "VALIDATION_ERROR", str(exc), get_ctx())
+
+    @app.exception_handler(Exception)
+    async def _unhandled_exc(_req, exc: Exception):
+        return _json_error(500, "INTERNAL_ERROR", f"{type(exc).__name__}: {exc}", get_ctx())
 
     return app
 
 
-def _json_error(status: int, code: str, message: str):
-    from fastapi.responses import JSONResponse
+def _json_error(status: int, code: str, message: str, ctx: ServiceContext | None = None):
+    should_redact = True
+    if ctx is not None:
+        should_redact = bool(getattr(ctx.cfg.platform.security, "redact_secrets_in_logs", True))
+    clean_msg = redact(str(message)) if should_redact else str(message)
     return JSONResponse(status_code=status,
-                        content={"error": {"code": code, "message": message}})
+                        content={"error": {"code": code, "message": clean_msg,
+                                           "trace_id": new_trace_id()}})
 
 
 def _guard(fn):
@@ -525,6 +550,19 @@ def health_report(ctx: ServiceContext) -> dict:
     if policy.strict and (providers or ctx.cfg.search.web_provider != "none"):
         checks["providers"]["level"] = "degraded"
         checks["providers"]["note"] = "LOCAL_ONLY but providers are configured - they will not be constructed"
+
+    bus = getattr(ctx, "bus", None)
+    persister = getattr(ctx, "_persister", None)
+    dropped = int(getattr(bus, "dropped_events", 0) or 0)
+    persist_errs = int(getattr(persister, "persistence_errors", 0) or 0)
+    persister_err = getattr(ctx, "_persister_error", None)
+    ev_degraded = bool(dropped > 0 or persist_errs > 0 or persister_err)
+    checks["events"] = {
+        "level": "degraded" if ev_degraded else "healthy",
+        "dropped_events": dropped,
+        "persistence_errors": persist_errs,
+        "persister_error": str(persister_err or ""),
+    }
 
     levels = [c["level"] for c in checks.values()]
     overall = ("unavailable" if "unavailable" in levels else

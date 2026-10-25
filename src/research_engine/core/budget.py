@@ -28,6 +28,9 @@ class Budget:
     def documents_left(self) -> int:
         return max(0, self.cfg.research.max_documents - self.usage.documents_used)
 
+    def sources_left(self) -> int:
+        return max(0, self.cfg.research.max_sources_total - self.usage.sources_discovered)
+
     def llm_calls_left(self) -> int:
         return max(0, self.cfg.research.max_llm_calls - self.usage.llm_calls_used)
 
@@ -43,6 +46,8 @@ class Budget:
             return "queries"
         if self.documents_left() <= 0:
             return "documents"
+        if self.sources_left() <= 0:
+            return "sources"
         if self.llm_calls_left() <= 0:
             return "llm_calls"
         if self.minutes_elapsed() > self.cfg.research.max_wall_clock_minutes:
@@ -56,6 +61,9 @@ class Budget:
     def spend_document(self, n: int = 1) -> None:
         self.usage.documents_used += n
 
+    def spend_sources(self, n: int = 1) -> None:
+        self.usage.sources_discovered += n
+
     def spend_llm(self, n: int = 1) -> None:
         self.usage.llm_calls_used += n
 
@@ -66,6 +74,7 @@ class Budget:
         return {
             "queries": f"{self.usage.queries_used}/{self.cfg.research.max_queries_per_iteration}x{self.cfg.research.max_iterations}",
             "documents": f"{self.usage.documents_used}/{self.cfg.research.max_documents}",
+            "sources": f"{self.usage.sources_discovered}/{self.cfg.research.max_sources_total}",
             "llm_calls": f"{self.usage.llm_calls_used}/{self.cfg.research.max_llm_calls}",
             "iterations": f"{self.usage.iterations_used}/{self.cfg.research.max_iterations}",
             "minutes_elapsed": round(self.minutes_elapsed(), 1),

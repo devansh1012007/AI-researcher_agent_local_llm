@@ -63,6 +63,8 @@ class SchedulerConfig:
             return cls()
         return cls(max_jobs=sched.max_jobs,
                    worker_threads=sched.worker_threads,
+                   lease_seconds=sched.lease_seconds,
+                   heartbeat_seconds=sched.heartbeat_seconds,
                    profile_caps=dict(sched.profile_caps))
 
 
@@ -424,17 +426,21 @@ class PersistentScheduler:
                                   JobStatus.QUEUED, JobStatus.RESUMING,
                                   JobStatus.COMPLETING):
                 continue
-            tasks = self.db.tasks_for_job(job.id)
-            if not tasks and job.type not in ("deep_research", "incremental_update",
-                                              "watcher_tick"):
+            counts = self.db.task_status_counts_for_job(job.id)
+            total_tasks = sum(counts.values())
+            if not total_tasks and job.type not in ("deep_research", "incremental_update",
+                                                    "watcher_tick"):
                 continue
-            queued = [t for t in tasks if t.status in
-                      (TaskStatus.QUEUED, TaskStatus.RETRYING, TaskStatus.CLAIMED,
-                       TaskStatus.RUNNING)]
-            dead = [t for t in tasks if t.status == TaskStatus.DEAD_LETTER]
-            done = [t for t in tasks if t.status == TaskStatus.SUCCEEDED]
-            active = [t for t in tasks if t.status in
-                      (TaskStatus.CLAIMED, TaskStatus.RUNNING)]
+            n_queued = sum(counts.get(s, 0) for s in (
+                TaskStatus.QUEUED, TaskStatus.RETRYING, TaskStatus.CLAIMED, TaskStatus.RUNNING
+            ))
+            n_dead = counts.get(TaskStatus.DEAD_LETTER, 0)
+            n_done = counts.get(TaskStatus.SUCCEEDED, 0)
+            n_active = sum(counts.get(s, 0) for s in (TaskStatus.CLAIMED, TaskStatus.RUNNING))
+            queued = n_queued > 0
+            dead = n_dead > 0
+            done = n_done > 0
+            active = n_active > 0
             if job.status == JobStatus.PAUSING and not active:
                 job.status = JobStatus.PAUSED
                 self.bus.publish(DomainEvent("ResearchPaused",
@@ -456,9 +462,10 @@ class PersistentScheduler:
                     continue
                 self._maybe_start_queued_job(job)
             if queued:
-                job.progress = {"done": len(done), "queued": len(queued),
-                                "dead_letter": len(dead)}
-                self.db.save_job(job)
+                new_prog = {"done": n_done, "queued": n_queued, "dead_letter": n_dead}
+                if job.progress != new_prog:
+                    job.progress = new_prog
+                    self.db.save_job(job)
                 continue
             # nothing queued left
             if job.status in (JobStatus.RUNNING, JobStatus.COMPLETING):

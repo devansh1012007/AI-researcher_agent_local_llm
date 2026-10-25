@@ -75,18 +75,34 @@ class MarketKnowledgeBase:
         }
 
     def freshness_summary(self, kb_entry: dict, today: str = "") -> dict:
-        """Per-kind freshness of remembered knowledge (spec #63)."""
+        """Per-kind freshness of remembered knowledge (spec #63, Phase 6.2)."""
+        from datetime import date
         from research_engine.specialists.startup.policies import freshness_state
-        out = {"markets": "fresh", "competitors": [], "pricing": []}
+        today_str = today or date.today().isoformat()
+        mkts = kb_entry.get("markets", [])
+        mkt_obs = ""
+        if mkts:
+            m0 = mkts[0]
+            mkt_obs = str(getattr(m0, "updated_at", "") or getattr(m0, "created_at", ""))[:10]
+        out = {
+            "markets": freshness_state("market_size", mkt_obs, today_str) if mkt_obs else "fresh",
+            "competitors": [],
+            "pricing": [],
+        }
         for c in kb_entry.get("competitors", []):
-            obs = ""
-            evs = getattr(c, "evidence_ids", []) or []
-            out["competitors"].append({"name": c.name,
-                                       "state": freshness_state("competitor", obs, today)})
+            obs = str(getattr(c, "observed_at", "") or getattr(c, "updated_at", "") or getattr(c, "created_at", ""))[:10]
+            out["competitors"].append({
+                "name": c.name,
+                "observed_at": obs,
+                "state": freshness_state("competitor", obs, today_str),
+            })
         for p in kb_entry.get("pricing_plans", []):
+            obs = str(getattr(p, "observed_at", "") or getattr(p, "updated_at", "") or getattr(p, "created_at", ""))[:10]
             out["pricing"].append({
                 "raw": p.price_raw,
-                "state": freshness_state("pricing", getattr(p, "observed_at", ""), today)})
+                "observed_at": obs,
+                "state": freshness_state("pricing", obs, today_str),
+            })
         return out
 
     # ------------------------------------------------------------- reuse side

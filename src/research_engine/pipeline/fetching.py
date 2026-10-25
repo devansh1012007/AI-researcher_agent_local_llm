@@ -14,7 +14,7 @@ import httpx
 
 from research_engine.core.config import AppConfig
 from research_engine.core.http_policy import build_egress_policy
-from research_engine.core.retry import NETWORK, run_with_retries
+from research_engine.core.retry import NETWORK, RetryPolicy, run_with_retries
 from research_engine.core.ids import stable_hash
 from research_engine.storage.cache import KVCache, cache_key
 
@@ -71,7 +71,13 @@ class DocumentFetcher:
                                       content_type=cached.get("content_type", ""),
                                       body=b64decode(cached.get("body_b64", "")),
                                       from_cache=True)
-        result = run_with_retries(self._do_fetch, NETWORK, on_failure="default", url=url,
+        policy = RetryPolicy(
+            max_attempts=max(1, int(self.cfg.network.max_retries)),
+            backoff_base=float(self.cfg.network.backoff_base_seconds),
+            retry_on=NETWORK.retry_on,
+            name="network",
+        )
+        result = run_with_retries(self._do_fetch, policy, on_failure="default", url=url,
                                   default=FetchedContent(url=url, error="all attempts failed"))
         if result.ok:
             self.cache.put(key, {"final_url": result.final_url, "status": result.status,

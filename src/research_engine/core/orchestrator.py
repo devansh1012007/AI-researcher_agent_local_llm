@@ -47,7 +47,7 @@ class Orchestrator:
         self.ws = Workspace(cfg.storage.data_dir, project.id)
         self.db = Database(self.ws.db_path)
         self.repos = Repositories(self.db)
-        self.events = EventLog(self.ws.root)
+        self.events = EventLog(self.ws.root, redact_secrets=self.cfg.platform.security.redact_secrets_in_logs)
         self.router = ModelRouter(cfg)
         self.registry = registry or build_default_registry(cfg)
         self.sm = StateMachine(self.repos)
@@ -160,8 +160,9 @@ class Orchestrator:
             p.stop_reason = StopReason.FAILED
             try:
                 self.sm.transition(p, ProjectState.FAILED, str(exc)[:300])
-            except ValueError:
-                pass
+            except ValueError as trans_exc:
+                log.error("state transition to FAILED rejected (%s); forcing FAILED state", trans_exc)
+                self.project.state = ProjectState.FAILED
             self.events.record(p.id, "fatal_error", "orchestrator", status="error", error=str(exc)[:500],
                                human_line=f"[{_ts()}] FATAL: {exc}")
             self.persist_checkpoint()
@@ -255,6 +256,10 @@ class Orchestrator:
                                     KVCache(f"{self.cfg.storage.data_dir}/_global/search_cache.sqlite"))
         executed_q, new_sources = retrieval.execute_queries(p.id, selected, self.budget.queries_left())
         self.budget.spend_query(len(executed_q))
+        sources_cap = self.budget.sources_left()
+        if len(new_sources) > sources_cap:
+            new_sources = new_sources[:sources_cap]
+        self.budget.spend_sources(len(new_sources))
         # 3. fetch + parse + chunk
         self.sm.transition(p, ProjectState.FETCHING, "search done")
         proc = self._make_document_processor()
@@ -272,6 +277,8 @@ class Orchestrator:
         self.sm.transition(p, ProjectState.VERIFYING, "extraction done")
         # claim consolidation includes quote verification already applied per-item
         new_claims, dup_claims = ev_worker.consolidate_claims(p.id, new_ev, it)
+        self._dup_claims_by_iter = getattr(self, "_dup_claims_by_iter", {})
+        self._dup_claims_by_iter[it] = dup_claims
         # --- Phase 2: attribute evidence/claims to branches via query lineage ---
         q_branch = {}
         for q in self.repos.queries.all(p.id):
@@ -298,7 +305,8 @@ class Orchestrator:
         self.events.record(p.id, "cycle_complete", "retrieval",
                            metadata={"queries": len(executed_q), "sources": len(new_sources),
                                      "docs_fetched": max(0, fetched_now), "evidence": len(new_ev),
-                                     "evidence_rejected": rejected_ct, "new_claims": new_claims},
+                                     "evidence_rejected": rejected_ct, "new_claims": new_claims,
+                                     "duplicate_claims": dup_claims},
                            status="ok" if new_sources else "empty",
                            human_line=(f"Queries executed: {len(executed_q)} | Sources found: {len(new_sources)} | "
                                        f"Docs parsed: {max(0, fetched_now)}\n"
@@ -442,16 +450,21 @@ class Orchestrator:
         return True
 
     @staticmethod
+    @staticmethod
     def _research_gain(prev, cur) -> int:
-        """Research gain per iteration (spec #88): supported claims + resolved gaps
-        + accepted evidence delta; diminishing returns become visible."""
-        new_ev_accepted = ((cur.evidence_created - cur.evidence_rejected)
-                           - (prev.evidence_created - prev.evidence_rejected))
+        """Research gain per iteration (spec #88, P3-2): supported claims + resolved gaps
+        + deduplicated accepted evidence delta; duplicate quote re-ingestions add 0 gain."""
+        raw_ev_accepted = max(0, ((cur.evidence_created - cur.evidence_rejected)
+                                  - (prev.evidence_created - prev.evidence_rejected)))
+        dedup_ev_accepted = max(
+            0.0,
+            raw_ev_accepted * (1.0 - max(0.0, min(1.0, float(getattr(cur, "duplicate_rate", 0.0))))),
+        )
         new_claims = cur.new_claims_this_iter
         gaps_resolved = max(0, cur.gaps_resolved - prev.gaps_resolved)
         quality_uplift = max(0.0, cur.source_diversity_domains - prev.source_diversity_domains)
         return int(round(new_claims * 2 + gaps_resolved * 2
-                         + max(0, new_ev_accepted) * 0.5 + quality_uplift))
+                         + dedup_ev_accepted * 0.5 + quality_uplift))
 
     def _stop_explanation(self, gains_history, last_rationale: str,
                           high_gaps: int) -> str:
@@ -562,6 +575,20 @@ class Orchestrator:
             log.warning("reasoning pipeline failed (isolated): %s", exc)
         gen = ReportGenerator(self.cfg, self.router.synthesis, self.repos, self.ws)
         generated = gen.generate_all(p)
+        from research_engine.models.project import ResearchReport
+        now_iso = datetime.now(timezone.utc).isoformat()
+        existing_by_path = {r.path: r for r in self.repos.reports.all(p.id)}
+        for rname in generated:
+            rep = existing_by_path.get(rname) or ResearchReport(
+                project_id=p.id,
+                kind=rname.removesuffix(".md"),
+                path=rname,
+            )
+            rep.generated_at = now_iso
+            rep.stop_reason = p.stop_reason
+            rep.budget_limited = bool(p.stop_reason and p.stop_reason != StopReason.CONVERGED)
+            rep.ensure_id()
+            self.repos.reports.save(rep)
         self.sm.transition(p, ProjectState.COMPLETED, f"reports: {', '.join(generated)}")
         self.events.record(p.id, "reports_generated", "reports",
                            metadata={"reports": generated},
@@ -582,6 +609,13 @@ class Orchestrator:
         m.evidence_created = self.repos.evidence.count(p.id)
         m.evidence_rejected = self.repos.evidence.count(p.id, "status='REJECTED'")
         m.unique_claims = self.repos.claims.count(p.id)
+        dup_by_iter = getattr(self, "_dup_claims_by_iter", {})
+        prev_dup_total = sum(
+            getattr(pm, "duplicate_claims_this_iter", 0)
+            for pm in self.repos.metrics.all(p.id) if pm.iteration < it
+        )
+        m.duplicate_claims_this_iter = int(dup_by_iter.get(it, 0))
+        m.duplicate_claims = prev_dup_total + m.duplicate_claims_this_iter
         m.contradictions = self.repos.contradictions.count(p.id)
         m.gaps_open = self.repos.gaps.count(p.id, "resolved=0")
         m.gaps_resolved = self.repos.gaps.count(p.id, "resolved=1")

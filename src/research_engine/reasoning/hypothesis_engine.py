@@ -522,7 +522,15 @@ def rank_hypotheses(repos: Repositories, rrepos: ReasoningRepos, project_id: str
             },
             "confidence": h.confidence,
         })
-    ranked.sort(key=lambda r: -r["rank_score"])
+    # P3-8: deterministic content-key tie-breaker (never mint order / hypothesis.id)
+    ranked.sort(
+        key=lambda r: (
+            -r["rank_score"],
+            -r["confidence"],
+            (r["hypothesis"].statement or "").strip().lower(),
+            (r["hypothesis"].title or "").strip().lower(),
+        )
+    )
     return ranked
 
 
@@ -567,13 +575,11 @@ class RefinementLoop:
                 changes["status_note"] = "flagged as speculative until evidence attached"
             new_status = "NEEDS_EVIDENCE" if any(
                 p["type"] in ("UNSUPPORTED", "UNFALSIFIABLE") for p in high) else "REFINED"
-            changes["status"] = new_status
             self.lifecycle.revise(project_id, h, changes,
                                   reason="critique refinement pass",
                                   new_evidence_ids=[])
-            # re-load status transitions properly
-            h.status = new_status
-            self.rrepos.hypotheses.save(h)
+            # P3-5: always route status changes through HypothesisLifecycle.transition()
+            self.lifecycle.transition(h, new_status, "critique refinement pass")
         score_hypothesis(self.repos, self.rrepos, project_id, h)
         final = self.critic.critique(project_id, h)
         return {"iterations": history, "final_critique": final,

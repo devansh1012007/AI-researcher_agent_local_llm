@@ -29,3 +29,20 @@ def test_sandbox_override_write_cannot_rebind_write_root(platform_ctx, tmp_path)
     assert execution.status == "FAILED", execution.stderr
     assert "sandbox" in execution.stderr.lower() or "PermissionError" in execution.stderr, execution.stderr
     assert not target.exists(), "the sandbox escape target must not be created"
+
+
+def test_mutation_runner_uses_sys_executable_without_local_venv():
+    """0.2: scripts/mutation_check.py must invoke pytest via sys.executable
+    and never hard-code a repository-local .venv/bin/python path."""
+    import ast
+    from pathlib import Path
+    script_path = Path(__file__).resolve().parents[2] / "scripts" / "mutation_check.py"
+    script = script_path.read_text()
+    tree = ast.parse(script)
+    string_literals = [
+        node.value for node in ast.walk(tree)
+        if isinstance(node, ast.Constant) and isinstance(node.value, str)
+    ]
+    assert ".venv" not in string_literals, "mutation_check.py must not hardcode .venv in string literals"
+    assert "[sys.executable," in script, "mutation_check.py must invoke pytest via sys.executable"
+    assert "M-20" in string_literals, "mutation_check.py must include M-20 for duplicate_rate"

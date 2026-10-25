@@ -75,7 +75,8 @@ class ServiceContext:
             make_deep_research_runner, make_experiment_runner, make_report_runner,
         )
         s = self._scheduler
-        assert s is not None
+        if s is None:
+            raise RuntimeError("scheduler failed to initialize")
         dr = make_deep_research_runner(self.cfg, self.bus)
         s.register_runner("DEEP_RESEARCH", lambda t: dr(t, s.control_flag))
         ex = make_experiment_runner(self.cfg)

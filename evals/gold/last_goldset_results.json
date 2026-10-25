@@ -3,30 +3,29 @@
   "n_contradiction": 3,
   "n_opportunity": 2,
   "gate_ready": false,
-  "support_precision": 0.0,
+  "support_precision": 1.0,
   "support_precision_ci": [
-    0.0,
-    0.0
+    0.34237195288961925,
+    1.0
   ],
-  "support_recall": 0.0,
+  "support_recall": 1.0,
   "support_recall_ci": [
-    0.0,
-    0.6576280471103807
+    0.34237195288961925,
+    1.0
   ],
-  "support_f1": 0.0,
-  "contradiction_accuracy": 0.0,
+  "support_f1": 1.0,
+  "contradiction_accuracy": 1.0,
   "contradiction_accuracy_ci": [
-    0.0,
-    0.5615060804490177
+    0.43849391955098227,
+    1.0
   ],
-  "opportunity_rank_correlation": 0.0,
+  "opportunity_rank_correlation": 1.0,
   "opportunity_rank_correlation_ci": [
-    0.4690690341793595,
-    0.5309309658206405
+    0.9961731014136095,
+    1.0
   ],
   "notes": [
     "few support labels: precision/recall CI wide",
-    "few contradiction labels: accuracy CI wide",
-    "no support labels scored"
+    "few contradiction labels: accuracy CI wide"
   ]
 }

@@ -112,14 +112,14 @@ class ValidationPlanner:
         Experiments, rank by expected information gain / effort.
         IDEMPOTENT: hypotheses that already have designed tests are skipped,
         so pipeline re-runs never duplicate validation work."""
-        existing_hyp_ids = {x.hypothesis_id for x in
-                            self.rrepos.experiments.all(project_id)}
+        existing_pairs = {(x.hypothesis_id, x.opportunity_id) for x in
+                          self.rrepos.experiments.all(project_id)}
         designed = []
         for h, assumptions in hypotheses_with_assumptions:
-            if h.id in existing_hyp_ids:
+            if (h.id, opportunity_id) in existing_pairs or (not opportunity_id and any(hid == h.id for hid, _ in existing_pairs)):
                 continue
             tests = self.designer.design_for_hypothesis(project_id, h, assumptions)
-            experiments = self.designer.persist_tests(project_id, h, "", tests)
+            experiments = self.designer.persist_tests(project_id, h, "", tests, opportunity_id=opportunity_id)
             for t, x in zip(tests, experiments):
                 gain = t.evidence_weight * max(
                     (a.priority for a in assumptions

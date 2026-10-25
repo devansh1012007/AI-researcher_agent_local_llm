@@ -81,3 +81,11 @@ None in this run — all tasks are SURFACE class.
 None yet.
 
 ### Assumptions → see 00-mission.md §6
+
+## Phase 0–6 Roadmap Completion (2026-10-25)
+- **Phases 0–1**: Restored canonical user-facing `README.md`, removed `apply_ci_stabilization.py`, made `scripts/mutation_check.py` interpreter-portable via `sys.executable`, and added `M-20` (`duplicate_rate`).
+- **Phase 2 (W7)**: Completed `P1-1` through `P1-16` (unknown provider hard-fail, config knob wiring/cleanup, JSON env overrides, CLI `--config`, 3 new specialist prompt templates bringing wheel template files to 22, `structured()` failure contract + `last_outcome`, safe `PromptSpec.render()`, numeric prompt version sorting, canonical API error envelope, `list_projects` DTO sorting, `EventLog` redaction, and DuckDuckGo challenge vs no-results parsing).
+- **Phase 3 & Phase 4 (W8–W9)**: Dynamic 43-route API and 30-tool MCP conformance + `docs/api.md` & `docs/mcp.md` parity (`P2-1`), property-style invariants (`P2-2`), silent-exception and `assert` cleanup (`P2-3`, `P2-4`), canonical money parser consolidation (`P2-5`), documentation reconciliation (`P2-6`), `/health` events degradation reporting (`P2-7`), and analyst review overlay verification (`C13`–`C16`).
+- **Phase 5 (W10)**: Implemented `report_citation_coverage` (`P3-1`, `M-21`), deduplicated `research_gain` (`P3-2`, `M-22`), `dup_count` persistence (`P3-3`, `M-23`), unsupported hypothesis cap `<=0.25` (`P3-4`), `RefinementLoop` lifecycle transitions (`P3-5`), vendor funding vs customer payment separation (`P3-6`, `M-24`), evidence-derived P4 strength (`P3-7`, `M-25`), deterministic hypothesis ranking tie-breaker (`P3-8`), and opportunity-scoped `Experiment.opportunity_id` + `DecisionEngine.readiness()` (`P3-9`, `M-26`), plus `run_eval.py --offline` (17/17 PASS) and `run_goldset.py`.
+- **Phase 6**: Enforced 1 MiB max stdio line length in `mcp_server/server.py` (`6.1`) and wired `freshness_summary`/`observed_at` and `ReportRepo` (`6.2`).
+- **Full Gate Verification**: `pytest` (465 passed, 1 skipped), `mutation_check.py` (`M-1`..`M-26` all DETECTED), `reaudit.py` (14/14 fixed), `check_dist.py` (passed), `run_eval.py --offline` (17/17 PASS), `run_goldset.py` (passed).

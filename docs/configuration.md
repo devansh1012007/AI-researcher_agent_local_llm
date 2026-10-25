@@ -7,13 +7,13 @@ One YAML (`gar.yaml`, see `gar.example.yaml`) + env overrides
 
 ```yaml
 platform:
-  mode: local                 # local|hybrid|online  (env modes #100)
+  mode: local                 # offline|local|online (resolves to LOCAL_ONLY|HYBRID|ONLINE, #100)
   profile: balanced           # minimal|balanced|high_memory|cpu_only|offline (#152)
   scheduler: {max_jobs: 1, worker_threads: 4, lease_seconds: 120,
               heartbeat_seconds: 15, profile_caps: {}}
   api: {enabled: true, host: "127.0.0.1", port: 8000, auth_token: ""}
   mcp: {enabled: true}
-  security: {local_only: true, privacy_mode: false,
+  security: {local_only: false, privacy_mode: false,
              data_classification: INTERNAL, allowed_roots: []}
   experiments: {enabled: true, sandbox: true, timeout_seconds: 1800,
                 memory_mb: 4096, cpu_seconds: 1800, network_enabled: false,

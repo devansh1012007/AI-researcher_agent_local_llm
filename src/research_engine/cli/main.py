@@ -97,7 +97,7 @@ def _print_status(orch):
 def cmd_pause(args):
     # P0-11: cooperative pause via the canonical service (no direct
     # state-machine mutation from the interface layer)
-    ctx = _ctx4()
+    ctx = _ctx4(args)
     pid = args.project_id
     stopped = ProjectService(ctx).pause(pid)
     console.print(f"[yellow]Paused.[/yellow] "
@@ -636,6 +636,10 @@ def cmd_trace_hypothesis(args):
 # ------------------------------------------------------------------ Phase 4
 def _ctx4(args=None):
     from research_engine.services.context import get_context
+    cfg_path = getattr(args, "config", None) if args is not None else None
+    if cfg_path:
+        cfg = AppConfig.load(cfg_path)
+        return get_context(cfg=cfg, data_dir=cfg.storage.data_dir)
     return get_context()
 
 
@@ -707,11 +711,10 @@ def cmd_review_revise(args):
 # Phase 5: startup specialist commands (spec #76)
 # ---------------------------------------------------------------------------
 
-def _svc4():
+def _svc4(args=None):
     """StartupResearchService wired to CLI context."""
     from research_engine.specialists.startup.service import StartupResearchService
-    from research_engine.core.config import AppConfig
-    cfg = AppConfig.load()
+    cfg = _cfg(args) if args is not None else AppConfig.load()
     return StartupResearchService(cfg=cfg, data_dir=cfg.storage.data_dir)
 
 
@@ -732,7 +735,7 @@ def cmd_startup_discover(args):
     if args.project:
         pid = args.project
     else:
-        ctx = _ctx4()
+        ctx = _ctx4(args)
         from research_engine.services.research_service import ProjectCreate, ProjectService
         ps = ProjectService(ctx)
         existing = [p for p in ps.list_projects()
@@ -760,7 +763,7 @@ def cmd_startup_research(args):
     svc = _svc4()
     pid = args.project
     if not pid:
-        ctx = _ctx4()
+        ctx = _ctx4(args)
         from research_engine.services.research_service import ProjectCreate, ProjectService
         created = ProjectService(ctx).create(
             ProjectCreate(question=args.market, mode="startup"))
@@ -953,7 +956,7 @@ def cmd_startup_next(args):
 
 def cmd_jobs(args):
     from research_engine.models.job import TERMINAL_STATUSES
-    ctx = _ctx4()
+    ctx = _ctx4(args)
     rows = ctx.platform_db.list_jobs(status=args.status or "",
                                      project_id=args.project or "")
     if not rows:
@@ -980,7 +983,7 @@ def _status_color(st: str) -> str:
 
 
 def cmd_job(args):
-    ctx = _ctx4()
+    ctx = _ctx4(args)
     j = ctx.platform_db.get_job(args.job_id)
     if j is None:
         console.print(f"[red]job not found: {args.job_id}[/red]")
@@ -998,7 +1001,7 @@ def cmd_job(args):
 
 
 def cmd_job_control(args):
-    ctx = _ctx4()
+    ctx = _ctx4(args)
     action, ident = args.action, args.id
     sched = ctx.scheduler
     ok = None
@@ -1024,7 +1027,7 @@ def cmd_job_control(args):
 
 def cmd_serve(args):
     import uvicorn
-    ctx = _ctx4()
+    ctx = _ctx4(args)
     host = args.host or ctx.cfg.platform.api.host
     port = args.port or ctx.cfg.platform.api.port
     if not is_loopback_host(host) and not ctx.cfg.platform.api.auth_token:
@@ -1046,12 +1049,12 @@ def cmd_serve(args):
 
 def cmd_mcp(args):
     from research_engine.mcp_server.server import McpServer
-    McpServer(_ctx4()).serve_forever()
+    McpServer(_ctx4(args)).serve_forever()
 
 
 def cmd_watch_add(args):
     from research_engine.services.watcher_service import WatcherCreate, WatcherService
-    w = WatcherService(_ctx4()).create(WatcherCreate(
+    w = WatcherService(_ctx4(args)).create(WatcherCreate(
         project_id=args.project_id, query=args.query,
         frequency_hours=args.every_hours,
         source_scope=[x.strip() for x in args.scope.split(",") if x.strip()],
@@ -1062,7 +1065,7 @@ def cmd_watch_add(args):
 
 def cmd_watch_list(args):
     from research_engine.services.watcher_service import WatcherService
-    ws = WatcherService(_ctx4()).list(args.project)
+    ws = WatcherService(_ctx4(args)).list(args.project)
     if not ws:
         console.print("[dim]no watchers[/dim]")
         return
@@ -1078,19 +1081,19 @@ def cmd_watch_list(args):
 
 def cmd_watch_run(args):
     from research_engine.services.watcher_service import WatcherService
-    summary = WatcherService(_ctx4()).run_now(args.watcher_id)
+    summary = WatcherService(_ctx4(args)).run_now(args.watcher_id)
     console.print_json(json.dumps(summary))
 
 
 def cmd_backup(args):
     from research_engine.platform.backup import backup_project
-    path = backup_project(_ctx4().data_dir, args.project_id, args.out)
+    path = backup_project(_ctx4(args).data_dir, args.project_id, args.out)
     console.print(f"backup written: {path} ({path.stat().st_size // 1024} KB)")
 
 
 def cmd_restore(args):
     from research_engine.platform.backup import restore_project
-    report = restore_project(args.archive, _ctx4().data_dir,
+    report = restore_project(args.archive, _ctx4(args).data_dir,
                              overwrite=args.overwrite)
     console.print(f"verified {report['verified_files']} files; restored: "
                   f"{', '.join(report['restored']) or 'nothing'}")
@@ -1098,7 +1101,7 @@ def cmd_restore(args):
 
 def cmd_export_bundle(args):
     from research_engine.platform.backup import export_bundle
-    path = export_bundle(_ctx4().data_dir, args.project_id, args.out)
+    path = export_bundle(_ctx4(args).data_dir, args.project_id, args.out)
     console.print(f"bundle exported: {path}")
 
 
@@ -1143,7 +1146,12 @@ def cmd_repair_startup(args):
 
 def cmd_doctor(args):
     from research_engine.api.app import health_report
-    report = health_report(_ctx4())
+    try:
+        ctx = _ctx4(args)
+    except ValueError as exc:
+        console.print(f"[red]Configuration error:[/red] {exc}")
+        return 1
+    report = health_report(ctx)
     icon = {"healthy": "[green]healthy[/green]",
             "degraded": "[yellow]degraded[/yellow]",
             "unavailable": "[red]unavailable[/red]"}

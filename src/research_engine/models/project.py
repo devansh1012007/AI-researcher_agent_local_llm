@@ -55,6 +55,7 @@ class ResearchProblem(Entity):
 class BudgetUsage(BaseModel):
     queries_used: int = 0
     documents_used: int = 0
+    sources_discovered: int = 0
     llm_calls_used: int = 0
     bytes_downloaded: int = 0
     iterations_used: int = 0
@@ -79,6 +80,7 @@ class ResearchMetrics(Entity):
     gaps_resolved: int = 0
     new_evidence_this_iter: int = 0
     new_claims_this_iter: int = 0
+    duplicate_claims_this_iter: int = 0
     duplicate_rate: float = 0.0        # TRUE duplicates among accepted evidence
     rejection_rate: float = 0.0        # failed quote/support verification ratio
     queries_this_iter: int = 0         # queries executed in this iteration

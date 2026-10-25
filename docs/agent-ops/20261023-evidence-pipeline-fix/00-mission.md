@@ -6,13 +6,13 @@ Remaining open issues from Stages 1–5 of `docs/plans/2026-10-22-evidence-pipel
 
 | Priority | Issue | Summary | State |
 |---|---|---|---|
-| P0 | C09 | Route all 12+ direct `httpx` call sites through `EgressPolicy`; add `policy` param to `router.build_provider`; manual per-hop redirect validation in `fetching.py` | Partial — module + construction gating exist; zero request-time enforcement |
-| P0 | W4 | Fix sandbox guard rebindable write-root (`experiments/runner.py:37`); add override-write regression test | Not done — `_ALLOWED_WRITE_ROOT` still a rebindable module global |
-| P1 | C18 | Fix `duplicate_rate` wiring in `eval_metrics.py:75` to use true `duplicate_ratio` | Partial — `eval_metrics.py:75` sets `rejected_ratio`, not true duplicate ratio |
-| P1 | C19 | Add `INV-029` row to `docs/invariants.md`; update `docs/service-boundaries.md` with review operation | Not done — INV-029 missing; service-boundaries.md missing review op |
-| P2 | W5 | Add ULID mutation to `scripts/mutation_check.py` | Not done — M-1..M-18 exist; none target `core/ids.py` |
-| P2 | W6 | Wire `local_only` field (currently dead at `core/config.py:139`); add dedicated LOCAL_ONLY gating test | Not done — field defined but never read; no gating test |
-| P2 | W7-W10 | P1/P2/P3 batch: unknown provider hard fail, dedicated templates, conformance harness, property layer, etc. | Not done — waves W7-W10 open per FIX_PLAN.md §7 |
+| P0 | C09 | Route all 12+ direct `httpx` call sites through `EgressPolicy`; add `policy` param to `router.build_provider`; manual per-hop redirect validation in `fetching.py` | **DONE** — implemented + 24 egress tests passing |
+| P0 | W4 | Fix sandbox guard rebindable write-root (`experiments/runner.py:37`); add override-write regression test | **DONE** — closure-isolated guard + `test_sandbox_override_write.py` passing |
+| P1 | C18 | Fix `duplicate_rate` wiring in `eval_metrics.py:75` to use true `duplicate_ratio` + `M-20` | **DONE** — implemented + `M-20` DETECTED |
+| P1 | C19 | Add `INV-029` row to `docs/invariants.md`; update `docs/service-boundaries.md` with review operation | **DONE** — `INV-026`..`INV-029` + review op documented and tested |
+| P2 | W5 | Add ULID mutation (`M-19`) to `scripts/mutation_check.py` | **DONE** — `M-19` DETECTED |
+| P2 | W6 | Wire `local_only` field (`core/config.py`); add dedicated LOCAL_ONLY gating test | **DONE** — `test_local_only_gating.py` passing |
+| P2 | W7-W10 | P1/P2/P3 + Phase 6 batch: unknown provider hard fail, dedicated templates, conformance harness, property layer, research-quality metrics (`M-21`..`M-26`), MCP 1 MiB cap, freshness/ReportRepo wiring | **DONE** — all Phases 0–6 implemented and verified (see `IMPLEMENTATION_STATUS.md`) |
 
 Out of scope for this run: W7-W10 batch (P1/P2/P3 items beyond W6), phase-7 branch merge, any schema migration, any change to `SCHEMA_VERSION`.
 

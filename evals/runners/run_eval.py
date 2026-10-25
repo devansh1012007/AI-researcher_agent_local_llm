@@ -35,7 +35,8 @@ def _startup_gates(task: dict, orch) -> list[str]:
     repos = orch.repos
 
     if task.get("expect_opportunity_pipeline"):
-        if not hasattr(orch, "_srepos") or True:
+        srepos = getattr(orch, "_srepos", None)
+        if srepos is None:
             try:
                 from research_engine.specialists.startup.repos import get_startup_repos
                 srepos = get_startup_repos(orch)
@@ -222,7 +223,8 @@ def main():
             failures.append("quote_correctness")
         if qg.get("duplicate_max") is not None and scores.duplicate_rate > qg["duplicate_max"]:
             failures.append("duplicate_rate")
-        if qg.get("min_evidence") is not None and scores.rejected_evidence_ratio < qg["min_evidence"]:
+        accepted_ev_count = repos.evidence.count(orch.project.id, "status!='REJECTED'")
+        if qg.get("min_evidence") is not None and accepted_ev_count < qg["min_evidence"]:
             failures.append("min_evidence")
         if qg.get("min_sources") is not None and scores.sources_accepted < qg["min_sources"]:
             failures.append("min_sources")

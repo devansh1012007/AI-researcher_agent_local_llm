@@ -111,7 +111,25 @@ class DuckDuckGoProvider(SearchProvider):
             raise SearchProviderError("duckduckgo: all attempts failed")
         return []
 
+    _NO_RESULTS_MARKERS = (
+        "no results",
+        "no more results",
+        "did not match any documents",
+        "no web pages were found",
+    )
+    _CHALLENGE_MARKERS = (
+        "anomaly-modal",
+        "bots use duckduckgo",
+        "please complete the following challenge",
+        "captcha",
+        "access denied",
+        "automated requests",
+        "rate limit",
+    )
+
     def _parse(self, html: str, max_results: int) -> list[RawSearchHit]:
+        if not html or not html.strip():
+            raise SearchProviderError("duckduckgo returned empty HTML body")
         hits: list[RawSearchHit] = []
         # result blocks: <a rel="nofollow" class="result__a" href="...">
         pattern = re.compile(
@@ -128,7 +146,14 @@ class DuckDuckGoProvider(SearchProvider):
                                      snippet=snippets[i] if i < len(snippets) else ""))
             if len(hits) >= max_results:
                 break
-        return hits
+        if hits:
+            return hits
+        low = html.lower()
+        if any(marker in low for marker in self._CHALLENGE_MARKERS):
+            raise SearchProviderError("duckduckgo bot challenge or rate-limit interstitial")
+        if any(marker in low for marker in self._NO_RESULTS_MARKERS) or 'class="no-results"' in low:
+            return []
+        raise SearchProviderError("duckduckgo returned unrecognized HTML structure without results or no-results marker")
 
 
 class SearxngProvider(SearchProvider):

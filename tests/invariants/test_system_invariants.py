@@ -248,3 +248,119 @@ class TestServiceBoundaries:
         asm = sorted(rr.assumptions.all(pid), key=lambda a: -a.priority)
         assert asm
         assert all(a.opportunity_id for a in asm)
+
+
+
+class TestPropertyStyleInvariants:
+    """P2-2: Property-style invariants over core engine, startup, and platform state."""
+
+    def test_rejected_evidence_excluded_from_aggregation_citations_and_scoring(self, tmp_path):
+        orch, cfg, tmp, pid = _seeded(tmp_path)
+        from research_engine.models.enums import EvidenceStatus
+        from research_engine.models.evidence import Evidence
+        from evals.metrics.eval_metrics import score_project
+
+        bad_ev = Evidence(
+            project_id=pid,
+            claim_text="The market size is $999 trillion in 2025 and customers paid $500000.",
+            quote="fabricated quote not in document",
+            source_id=orch.repos.sources.all(pid)[0].id,
+            source_tier=1,
+            status=EvidenceStatus.REJECTED,
+        )
+        bad_ev.ensure_id()
+        orch.repos.evidence.save(bad_ev)
+
+        from research_engine.specialists.startup.service import StartupResearchService
+        svc = StartupResearchService(cfg=cfg, data_dir=str(tmp))
+        svc.run_full_pipeline(pid)
+
+        for clm in orch.repos.claims.all(pid):
+            assert bad_ev.id not in clm.supported_by
+            assert bad_ev.id not in clm.contradicted_by
+        for opp in orch.repos.opportunities.all(pid):
+            assert bad_ev.id not in opp.evidence_ids
+
+        scores = score_project(orch.repos, pid)
+        accepted_ids = {e.id for e in orch.repos.evidence.all(pid, "status!='REJECTED'")}
+        assert bad_ev.id not in accepted_ids
+        assert round(scores.rejected_evidence_ratio, 4) == round(1.0 / (len(accepted_ids) + 1), 4)
+
+    def test_every_claim_supported_by_resolves_to_same_project_evidence(self, tmp_path):
+        orch, cfg, tmp, pid = _seeded(tmp_path)
+        from research_engine.models.evidence import Claim
+        ev_ids = [e.id for e in orch.repos.evidence.all(pid, "status!='REJECTED'")]
+        c = Claim(project_id=pid, text="Retailers pay monthly for bookkeeping.",
+                  supported_by=ev_ids[:2], confidence=0.75)
+        c.ensure_id()
+        orch.repos.claims.save(c)
+
+        ev_map = {e.id: e for e in orch.repos.evidence.all(pid)}
+        for clm in orch.repos.claims.all(pid):
+            for eid in clm.supported_by:
+                assert eid in ev_map, f"Claim {clm.id} references missing evidence {eid}"
+                assert ev_map[eid].project_id == pid
+
+    def test_fts_index_matches_saved_rows_across_repeated_saves(self, tmp_path):
+        orch, cfg, tmp, pid = _seeded(tmp_path)
+        ev = orch.repos.evidence.all(pid)[0]
+        for idx in range(3):
+            orch.repos.db.fts_index(ev.id, pid, "evidence",
+                                    f"unique_token_reindexed_{idx} bookkeeping")
+        conn = sqlite3.connect(orch.ws.db_path)
+        cnt = conn.execute(
+            "SELECT COUNT(*) FROM evidence_fts WHERE entity_id=? AND project_id=?",
+            (ev.id, pid),
+        ).fetchone()[0]
+        assert cnt == 1, f"Expected 1 FTS row after repeated indexing, got {cnt}"
+        hits = orch.repos.db.fts_search(pid, "unique_token_reindexed_2")
+        assert ev.id in hits
+
+    def test_terminal_job_statuses_are_absorbing_and_fencing_monotonic(self, tmp_path):
+        from research_engine.models.job import JobStatus, JobTask, ResearchJob, ResourceProfile
+        from research_engine.storage.platform_db import PlatformDB, StaleTaskOwner
+
+        pdb = PlatformDB(tmp_path / "platform.sqlite")
+        job = ResearchJob(project_id="proj_1", type="deep_research")
+        task = JobTask(job_id=job.id, project_id="proj_1", type="DEEP_RESEARCH",
+                       resource_profile=ResourceProfile.CPU_LIGHT)
+        pdb.save_job(job)
+        pdb.add_task(task)
+
+        claimed1 = pdb.claim_next_task("w1", {ResourceProfile.CPU_LIGHT: 1}, lease_seconds=0)
+        assert claimed1 is not None and claimed1.attempts == 1
+        claimed2 = pdb.claim_next_task("w2", {ResourceProfile.CPU_LIGHT: 1}, lease_seconds=60)
+        assert claimed2 is not None and claimed2.attempts == 2
+
+        with pytest.raises(StaleTaskOwner):
+            pdb.finish_task(task.id, worker_id="w1", fence=1, ok=True)
+
+        pdb.finish_task(task.id, worker_id="w2", fence=2, ok=True)
+        job.status = JobStatus.COMPLETED
+        pdb.save_job(job)
+        # Attempting to overwrite a terminal job back to RUNNING must be absorbed
+        job.status = JobStatus.RUNNING
+        pdb.save_job(job)
+        done_job = pdb.get_job(job.id)
+        assert done_job.status == JobStatus.COMPLETED
+        assert pdb.claim_next_task("w3", {ResourceProfile.CPU_LIGHT: 1}, lease_seconds=60) is None
+
+    def test_build_market_context_idempotent_and_speculative_marked(self, tmp_path):
+        orch, cfg, tmp, pid = _seeded(tmp_path)
+        from research_engine.specialists.startup.service import StartupResearchService
+        svc = StartupResearchService(cfg=cfg, data_dir=str(tmp))
+        svc.run_mode(pid, "OPPORTUNITY_DISCOVERY")
+        counts_1 = _snap(orch.ws.db_path)
+        svc.run_mode(pid, "OPPORTUNITY_DISCOVERY")
+        counts_2 = _snap(orch.ws.db_path)
+        assert counts_1["startup_markets"] == counts_2["startup_markets"]
+        assert counts_1["pricing_plans"] == counts_2["pricing_plans"]
+        assert counts_1["startup_personas"] == counts_2["startup_personas"]
+        assert counts_1["alternatives"] == counts_2["alternatives"]
+        assert counts_1["jtbd"] == counts_2["jtbd"]
+
+        for opp in orch.repos.opportunities.all(pid):
+            if not opp.evidence_ids:
+                assert "SPECULATIVE" in (opp.notes or "")
+                gate = (opp.score_breakdown or {}).get("gate", {})
+                assert gate.get("priority") != "high"

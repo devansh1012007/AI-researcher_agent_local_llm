@@ -232,6 +232,7 @@ CREATE TABLE IF NOT EXISTS experiments (
     id TEXT PRIMARY KEY,
     project_id TEXT NOT NULL,
     hypothesis_id TEXT NOT NULL,
+    opportunity_id TEXT DEFAULT '',
     status TEXT,
     risk_level TEXT,
     data TEXT NOT NULL
@@ -422,11 +423,52 @@ class Database:
     def _migrate(self) -> None:
         """Lightweight additive migrations for DBs created by older engine versions."""
         c = self._conn()
-        for table, col, decl in (("claims", "iteration", "INTEGER DEFAULT 0"),):
+        for table, col, decl in (
+            ("claims", "iteration", "INTEGER DEFAULT 0"),
+            ("experiments", "opportunity_id", "TEXT DEFAULT ''"),
+        ):
             cols = {r["name"] for r in c.execute(f"PRAGMA table_info({table})").fetchall()}
             if col not in cols:
                 with c:
                     c.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")
+        self._backfill_experiment_opportunity_ids(c)
+
+    def _backfill_experiment_opportunity_ids(self, c) -> None:
+        """P3-9: backfill experiments.opportunity_id ONLY when unambiguous."""
+        import json as _json
+        import re as _re
+        rows = c.execute(
+            "SELECT id, project_id, hypothesis_id, data FROM experiments "
+            "WHERE opportunity_id IS NULL OR opportunity_id = ''"
+        ).fetchall()
+        for r in rows:
+            try:
+                d = _json.loads(r["data"])
+            except Exception:
+                continue
+            opp_id = str(d.get("opportunity_id") or "").strip()
+            if not opp_id:
+                note = str(d.get("decision_note") or "")
+                m = _re.search(r"(?:^|;\s*)opp=(opp_[A-Za-z0-9_\-]+)", note)
+                if m:
+                    opp_id = m.group(1)
+            if not opp_id and r["hypothesis_id"]:
+                asm_rows = c.execute(
+                    "SELECT DISTINCT opportunity_id FROM assumptions2 "
+                    "WHERE project_id=? AND json_extract(data, '$.hypothesis_id')=? "
+                    "AND opportunity_id IS NOT NULL AND opportunity_id != ''",
+                    (r["project_id"], r["hypothesis_id"]),
+                ).fetchall()
+                distinct_opps = [ar["opportunity_id"] for ar in asm_rows if ar["opportunity_id"]]
+                if len(distinct_opps) == 1:
+                    opp_id = distinct_opps[0]
+            if opp_id:
+                d["opportunity_id"] = opp_id
+                with c:
+                    c.execute(
+                        "UPDATE experiments SET opportunity_id=?, data=? WHERE id=?",
+                        (opp_id, _json.dumps(d, default=str), r["id"]),
+                    )
 
     # -- generic CRUD ------------------------------------------------------
     def upsert(self, table: str, entity_id: str, project_id: str, data: dict,

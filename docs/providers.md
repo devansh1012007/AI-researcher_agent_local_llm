@@ -19,8 +19,7 @@ search:
 embeddings: {provider: hashing}
 ```
 
-Unknown providers fall back to mock with a warning — graceful degradation is
-a contract (#52).
+Unknown LLM providers (`models.<role>.provider` outside `ollama`, `openai_compatible`, `llama_cpp`, `mock`) fail fast at configuration load and provider construction with `ValueError` (`P1-1`).
 
 ## Failover chains (#53)
 

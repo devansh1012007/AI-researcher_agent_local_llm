@@ -161,11 +161,14 @@ class HypothesisService:
         ranked = rank_hypotheses(orch.repos, rr, project_id, objective)
         out = []
         for r in ranked:
-            h = rr.hypotheses.get(r["id"])
+            hyp_obj = r.get("hypothesis")
+            hid = r.get("id") or (hyp_obj.id if hyp_obj is not None else None)
+            h = hyp_obj if hyp_obj is not None else (rr.hypotheses.get(hid) if hid else None)
             if h is None:
                 continue
             d = json.loads(h.model_dump_json())
-            d["rank_score"] = round(r["score"], 3)
+            score_val = r.get("rank_score", r.get("score", 0.0))
+            d["rank_score"] = round(float(score_val), 3)
             out.append(d)
         return out
 
@@ -184,9 +187,15 @@ class HypothesisService:
         h = rr.hypotheses.get(hypothesis_id)
         if h is None:
             raise NotFoundError("hypothesis", hypothesis_id)
-        designs = MethodologyDesigner(orch.repos, rr,
-                                      orch.router.reasoning).design(project_id, h)
-        return [json.loads(d.model_dump_json()) for d in designs]
+        designer = MethodologyDesigner(orch.repos, rr, orch.router.reasoning)
+        designs = designer.design(project_id, h)
+        outcome = dict(designer.last_outcome)
+        out = []
+        for d in designs:
+            row = json.loads(d.model_dump_json())
+            row["llm_outcome"] = outcome
+            out.append(row)
+        return out
 
     def generate(self, project_id: str) -> dict:
         """Run hypothesis generation on demand (competing sets, spec #8)."""
@@ -216,7 +225,13 @@ class ReportService:
 
     def list_reports(self, project_id: str) -> list[str]:
         path = Path(self.ctx.data_dir, project_id, "reports")
-        return sorted(f.name for f in path.glob("*.md")) if path.exists() else []
+        fs_names = {f.name for f in path.glob("*.md")} if path.exists() else set()
+        try:
+            orch = _orch(self.ctx, project_id)
+            db_names = {r.path for r in orch.repos.reports.all(project_id) if r.path}
+        except Exception:
+            db_names = set()
+        return sorted(fs_names | db_names)
 
     def read_report(self, project_id: str, name: str) -> str:
         if "/" in name or ".." in name:   # path traversal guard (#146)
@@ -320,6 +335,7 @@ class ExperimentService:
         exp = Experiment(project_id=project_id,
                          hypothesis_id=spec.get("hypothesis_id", ""),
                          methodology_id=spec.get("methodology_id", ""),
+                         opportunity_id=spec.get("opportunity_id", ""),
                          title=spec.get("title", "experiment"))
         if spec.get("configuration"):
             exp.decision_note = json.dumps(spec["configuration"])[:500]
@@ -361,10 +377,15 @@ class ExperimentService:
         from research_engine.reasoning.result_ingestion import ResultIngestor
         orch = _orch(self.ctx, project_id)
         ing = ResultIngestor(orch.repos, _rrepos(orch))
-        outcome = ing.ingest(project_id, experiment_id,
-                             observations=observations or [],
-                             metrics=metrics or {},
-                             raw_notes=raw_notes)
+        try:
+            outcome = ing.ingest(project_id, experiment_id,
+                                 observations=observations or [],
+                                 metrics=metrics or {},
+                                 raw_notes=raw_notes)
+        except ValueError as exc:
+            if "not found" in str(exc).lower():
+                raise NotFoundError("experiment", experiment_id) from exc
+            raise
         self.ctx.bus.publish(DomainEvent("ExperimentResultAvailable",
                                          project_id=project_id,
                                          payload={"experiment_id": experiment_id,

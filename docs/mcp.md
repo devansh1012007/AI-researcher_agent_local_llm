@@ -13,23 +13,43 @@ research mcp          # JSON-RPC 2.0 over stdio; add to your MCP client config:
 
 Implemented methods: `initialize`, `tools/list`, `tools/call`,
 `resources/list`, `resources/templates/list`, `resources/read`, `ping`.
+Stdio requests are bounded to a maximum line length of 1 MiB (1,048,576 bytes);
+oversized lines return JSON-RPC error `-32600` (`Invalid Request: line exceeds 1 MiB limit`) without terminating the server.
 
 ## Tools (spec #28)
 
 | Tool | Permission | Notes |
 |---|---|---|
-| create_research_project | RESEARCH | returns project id + hint |
-| start_research | RESEARCH | returns job identity immediately (#31) |
-| get_research_status | READ | state/budget/counts/progress |
-| pause/resume/cancel_research | RESEARCH | graceful lifecycle |
-| get_job_status | READ | poll long jobs incl. task states |
-| get_research_report | READ | markdown by name (traversal-guarded) |
-| search_research_memory / ask_research_memory | READ | hybrid retrieval / grounded QA |
-| get_claim · trace_claim · get_evidence | READ | provenance chains |
-| get_gaps · get_contradictions · list_hypotheses | READ | ranked views |
-| generate_hypotheses | RESEARCH | competing sets from gaps/contradictions |
-| design_methodology | RESEARCH | 3-tier designs w/ pre-registered criteria |
-| add_experiment_result | WRITE | verdict vs pre-registered criteria |
+| `create_research_project` | RESEARCH | returns project id + hint |
+| `start_research` | RESEARCH | returns job identity immediately (#31) |
+| `get_research_status` | READ | state/budget/counts/progress |
+| `pause_research` | RESEARCH | pause running research for a project |
+| `resume_research` | RESEARCH | resume paused research |
+| `cancel_research` | RESEARCH | cancel running research (graceful) |
+| `get_job_status` | READ | poll long jobs incl. task states |
+| `get_research_report` | READ | markdown by name (traversal-guarded) |
+| `search_research_memory` | READ | hybrid retrieval over stored evidence chunks |
+| `ask_research_memory` | READ | grounded Q&A with citation-backed answer |
+| `get_claim` | READ | claim detail with evidence provenance chain |
+| `trace_claim` | READ | full claim -> evidence -> source provenance chain (annotated with `role`) |
+| `get_evidence` | READ | evidence item with its source |
+| `get_gaps` | READ | open research gaps sorted by importance |
+| `get_contradictions` | READ | detected contradictions between claims |
+| `list_hypotheses` | READ | ranked hypothesis portfolio |
+| `generate_hypotheses` | RESEARCH | competing sets from gaps/contradictions |
+| `design_methodology` | RESEARCH | 3-tier designs w/ pre-registered criteria |
+| `add_experiment_result` | WRITE | verdict vs pre-registered criteria |
+| `record_review_decision` | WRITE | analyst review decision overlay on claim/contradiction/validation_plan |
+| `startup_research` | RESEARCH | full startup pipeline: discovery -> hypotheses -> validation -> decision |
+| `startup_discover_opportunities` | RESEARCH | evidence-pattern opportunity discovery |
+| `startup_get_market_map` | READ | market map: definition, gaps, segments, competitors, trends |
+| `startup_get_customer_segments` | READ | customer research: segments, personas, pains, alternatives, workflow |
+| `startup_get_competitors` | READ | competitor profiles, pricing plans, distribution, gaps |
+| `startup_get_opportunities` | READ | scored, gated opportunity portfolio |
+| `startup_analyze_opportunity` | READ | due diligence on one opportunity: rubric, readiness, recommendation |
+| `startup_get_assumptions` | READ | ranked assumption register |
+| `startup_design_validation` | RESEARCH | design ranked validation tests + staged sequence |
+| `startup_compare_opportunities` | READ | side-by-side comparison matrix + tradeoffs |
 
 ## Resources (#29)
 

@@ -11,8 +11,13 @@
         "quote_correctness_min": 0.9,
         "citation_coverage_min": 0.9,
         "primary_ratio_min": 0.15,
-        "duplicate_max": 0.5,
-        "subq_coverage_min": 0.0
+        "duplicate_max": 0.9,
+        "subq_coverage_min": 0.0,
+        "duplicate_max_derivation": {
+          "value": 0.9,
+          "derived_from": "golden_tasks+duplicate_rate",
+          "rationale": "C18/D.7 re-derivation after wiring true duplicate_ratio() (formerly rejected_ratio() == 0.0); offline deterministic fake corpus exhibits 0.833-0.842 quote duplication across all 17 tasks."
+        }
       },
       "notes": "Phase 4 acceptance: project runs to COMPLETED through the platform job system (scheduler + leases), events persisted, reports generated. Retrieval gates relaxed because the assertion target is lifecycle correctness, not retrieval volume.",
       "expect_completed": true

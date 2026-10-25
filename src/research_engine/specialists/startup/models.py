@@ -106,6 +106,7 @@ class CompetitorProfile(Entity):
     """Structured competitor intelligence. Existence != traction (kept separate)."""
     PREFIX: ClassVar[str] = "cpx"
     name: str = ""
+    observed_at: str = ""
     product: str = ""
     classification: str = ""  # direct|indirect|substitute|potential_entrant|platform|
                               # infrastructure_provider|internal_alternative

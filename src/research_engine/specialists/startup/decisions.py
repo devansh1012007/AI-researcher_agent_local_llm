@@ -43,7 +43,13 @@ class DecisionEngine:
         critical_untested = [a for a in asm
                              if a.kind == "critical" and a.status == "unverified"]
 
-        experiments = self.rrepos.experiments.all(project_id)
+        if opportunity_id:
+            experiments = [
+                e for e in self.rrepos.experiments.all(project_id)
+                if getattr(e, "opportunity_id", "") == opportunity_id
+            ]
+        else:
+            experiments = self.rrepos.experiments.all(project_id)
         has_tests = bool(experiments)
 
         if len(tested) >= 2 and all(a.status != "falsified" for a in tested) \

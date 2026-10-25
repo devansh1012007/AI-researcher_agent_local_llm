@@ -20,7 +20,8 @@ class EvalScores:
     # evidence
     quote_correctness: float = 1.0     # fraction of stored evidence whose quotes verify
     rejected_evidence_ratio: float = 0.0
-    citation_coverage: float = 0.0     # claims with >=1 supporting evidence
+    citation_coverage: float = 0.0     # claims with >=1 quote-verified supporting evidence
+    report_citation_coverage: float = 0.0  # rendered report factual lines carrying verifiable [ev_...] citations
     duplicate_rate: float = 0.0
     # research
     subquestion_coverage: float = 0.0
@@ -46,7 +47,7 @@ class EvalScores:
             f"domains={self.source_diversity_domains} accepted={self.sources_accepted} "
             f"rejected={self.sources_rejected} efficiency={self.search_efficiency:.2f}",
             f"evidence:    quote_ok={self.quote_correctness:.2f} dup_rate={self.duplicate_rate:.2f} "
-            f"citation_coverage={self.citation_coverage:.2f}",
+            f"citation_coverage={self.citation_coverage:.2f} report_cit={self.report_citation_coverage:.2f}",
             f"research:    subq_cov={self.subquestion_coverage:.2f} gaps={self.gaps_discovered} "
             f"(resolved {self.gaps_resolved}) contradictions={self.contradictions_found}",
             f"adaptive:    gain_by_iter={self.research_gain_by_iteration} "
@@ -89,20 +90,43 @@ def score_project(repos: Repositories, project_id: str,
         s.notes.append("no chunk text available for quote re-verification")
 
     claims = repos.claims.all(project_id)
+    verified_ev_ids: set[str] = set()
+    for e in ok_ev:
+        ct = chunks.get(e.chunk_id)
+        if ct is not None and verify_quote(e.quote, ct)[0]:
+            verified_ev_ids.add(e.id)
     if claims:
-        from research_engine.pipeline.evidence import verify_quote
-        chunks = {c.id: c.text for c in repos.chunks.all(project_id)}
         covered = 0
         for c in claims:
-            for eid in c.supported_by:
-                ev = repos.evidence.get(eid)
-                if ev is None or ev.status.value == "REJECTED":
-                    continue
-                ct = chunks.get(ev.chunk_id)
-                if ct is not None and verify_quote(ev.quote, ct)[0]:
-                    covered += 1
-                    break
+            if any(eid in verified_ev_ids for eid in c.supported_by):
+                covered += 1
         s.citation_coverage = covered / len(claims)
+
+    # P3-1: report_citation_coverage over rendered info.md factual bullets
+    import re as _re
+    from pathlib import Path as _Path
+    db_file = getattr(repos.db, "db_path", None)
+    info_md_path = (_Path(db_file).parent / "reports" / "info.md") if db_file else None
+    if info_md_path and info_md_path.exists():
+        info_txt = info_md_path.read_text(encoding="utf-8")
+        # Extract lines inside Key Findings -> Evidence-backed findings
+        m_sec = _re.search(r"#### Evidence-backed findings\s+(.*?)(?:\n#### |\n## |\Z)", info_txt, _re.S)
+        section_body = m_sec.group(1) if m_sec else info_txt
+        bullet_lines = [
+            ln.strip() for ln in section_body.splitlines()
+            if ln.strip().startswith(("- **", "* **"))
+        ]
+        if bullet_lines:
+            cited_bullets = 0
+            for ln in bullet_lines:
+                eids = _re.findall(r"\[(ev_[A-Za-z0-9_]+)\]", ln)
+                if any(eid in verified_ev_ids for eid in eids):
+                    cited_bullets += 1
+            s.report_citation_coverage = round(cited_bullets / len(bullet_lines), 4)
+        else:
+            s.report_citation_coverage = s.citation_coverage
+    else:
+        s.report_citation_coverage = s.citation_coverage
 
     if expected_subquestions:
         covered = 0
@@ -127,14 +151,24 @@ def score_project(repos: Repositories, project_id: str,
     s.queries_executed = repos.queries.count(project_id, "executed=1")
     s.errors = repos.tasks.count(project_id, "status IN ('FAILED','DEAD')")
 
-    # --- Phase 2: research gain & search efficiency -------------------------
+    # --- Phase 2: research gain & search efficiency (P3-2 deduplicated) -----
     metrics_sorted = sorted(repos.metrics.all(project_id), key=lambda m: m.iteration)
+    seen_quotes: set[str] = set()
+    unique_ev_by_iter: dict[int, int] = {}
+    from research_engine.core.ids import stable_hash
+    for e in sorted(ok_ev, key=lambda x: (x.iteration, x.id)):
+        qh = stable_hash(e.quote or e.claim_text or "")
+        if qh not in seen_quotes:
+            seen_quotes.add(qh)
+            unique_ev_by_iter[e.iteration] = unique_ev_by_iter.get(e.iteration, 0) + 1
     gains = []
     for prev, cur in zip(metrics_sorted, metrics_sorted[1:]):
+        raw_ev_delta = max(0, (cur.evidence_created - cur.evidence_rejected)
+                             - (prev.evidence_created - prev.evidence_rejected))
+        dedup_ev_delta = unique_ev_by_iter.get(cur.iteration, int(round(raw_ev_delta * (1.0 - cur.duplicate_rate))))
         gain = ((cur.new_claims_this_iter * 2)
                 + max(0, cur.gaps_resolved - prev.gaps_resolved) * 2
-                + max(0, (cur.evidence_created - cur.evidence_rejected)
-                        - (prev.evidence_created - prev.evidence_rejected)) * 0.5)
+                + max(0, dedup_ev_delta) * 0.5)
         gains.append(round(gain))
     if gains:
         s.research_gain_by_iteration = gains

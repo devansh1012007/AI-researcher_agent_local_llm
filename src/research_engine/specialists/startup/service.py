@@ -213,6 +213,11 @@ class StartupResearchService:
                        [t.description[:120] for t in ctx["tech_shifts"][:5]]},
             "open_questions": ([g["reason"] for g in ctx["competitive_gaps"]] +
                                ctx["market"].definition_gaps),
+            "freshness": self.kb.freshness_summary({
+                "markets": [ctx["market"]],
+                "competitors": ctx["competitor_profiles"],
+                "pricing_plans": ctx["pricing_plans"],
+            }),
         }
 
     # --- MARKET_DEEP_DIVE (#55)
@@ -438,6 +443,7 @@ class StartupResearchService:
                 "opportunity_id": opp.id,
                 "hypotheses_covered": len(pairs),
                 "assumptions_created": len(all_asm),
+                "assumption_llm_outcome": dict(getattr(builder, "last_outcome", {})),
                 "tests_designed": designed,
                 "staged_sequence": stages,
                 "biggest_behavioral_uncertainty": biggest,

@@ -6,12 +6,17 @@ Config precedence: defaults < YAML file < environment overrides (GAR_ prefix).
 from __future__ import annotations
 
 import ipaddress
+import json
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, get_args, get_origin
 
 import yaml
 from pydantic import BaseModel, Field
+
+SUPPORTED_LLM_PROVIDERS: frozenset[str] = frozenset(
+    {"mock", "ollama", "openai_compatible", "llama_cpp"}
+)
 
 
 class LLMRoleConfig(BaseModel):
@@ -23,6 +28,18 @@ class LLMRoleConfig(BaseModel):
     max_tokens: int = 2048
     context_tokens: int = 8000
     timeout_seconds: float = 120.0
+
+    def __init__(self, **data: Any):
+        super().__init__(**data)
+        self.validate_provider()
+
+    def validate_provider(self) -> None:
+        p = (self.provider or "").strip()
+        if p not in SUPPORTED_LLM_PROVIDERS:
+            supported = ", ".join(sorted(SUPPORTED_LLM_PROVIDERS))
+            raise ValueError(
+                f"Unknown LLM provider {self.provider!r}; supported providers: {supported}"
+            )
 
 
 class LLMConfig(BaseModel):
@@ -39,7 +56,6 @@ class ResearchConfig(BaseModel):
     max_sources_total: int = 150
     max_llm_calls: int = 300
     max_wall_clock_minutes: int = 60
-    min_evidence_per_gap_query: float = 0.05  # convergence signal
     new_evidence_threshold: float = 0.10  # fraction of prior evidence => converged
     duplicate_rate_converged: float = 0.7
     review_gates_enabled: bool = False  # when True, orchestrator pauses at gates
@@ -161,7 +177,7 @@ class ExperimentsConfig(BaseModel):
 
 
 class PlatformConfig(BaseModel):
-    mode: str = "local"                # LOCAL_ONLY | HYBRID | ONLINE (spec #100)
+    mode: str = "local"                # offline | local | online (spec #100)
     profile: str = "balanced"          # minimal | balanced | high_memory | cpu_only | offline (#152)
     scheduler: SchedulerSection = Field(default_factory=SchedulerSection)
     api: ApiConfig = Field(default_factory=ApiConfig)
@@ -178,7 +194,7 @@ class PlatformConfig(BaseModel):
         behaviour with a truthful label), ``online`` -> ONLINE.
         ``privacy_mode: true`` and ``local_only: true`` each force
         LOCAL_ONLY. An unknown mode resolves to LOCAL_ONLY and logs a loud
-        error - fail closed.
+        error - fail closed. Also honours data_classification == 'LOCAL_ONLY'.
         """
         import logging
 
@@ -190,6 +206,8 @@ class PlatformConfig(BaseModel):
                 "security.local_only is true: resolving environment to "
                 "LOCAL_ONLY (fail closed; no network providers)",
             )
+            return "LOCAL_ONLY"
+        if (self.security.data_classification or "").upper() == "LOCAL_ONLY":
             return "LOCAL_ONLY"
         resolved = {
             "offline": "LOCAL_ONLY",
@@ -205,8 +223,9 @@ class PlatformConfig(BaseModel):
             return "LOCAL_ONLY"
         return resolved
 
-    def apply_profile(self) -> None:
+    def apply_profile(self, resources: ResourceConfig | None = None) -> None:
         """Resource profiles (spec #152): named presets that lower limits."""
+        llm_small_cap = max(1, resources.max_parallel_llm_tasks) if resources else 2
         profiles = {
             "minimal": {"max_jobs": 1, "worker_threads": 2,
                         "profile_caps": {"NETWORK_LIGHT": 2, "LLM_SMALL": 1,
@@ -218,11 +237,78 @@ class PlatformConfig(BaseModel):
             "high_memory": {},
             "balanced": {},
         }
+        if resources is not None and resources.max_parallel_llm_tasks != 1:
+            self.scheduler.profile_caps.setdefault("LLM_SMALL", llm_small_cap)
+            self.scheduler.profile_caps.setdefault("LLM_LARGE", max(1, resources.max_parallel_llm_tasks))
         overrides = profiles.get(self.profile)
         if not overrides:
             return
         for key, val in overrides.items():
             setattr(self.scheduler, key, val)
+
+
+def _unwrap_optional(ann: Any) -> Any:
+    origin = get_origin(ann)
+    if origin is None:
+        return ann
+    args = [a for a in get_args(ann) if a is not type(None)]
+    if len(args) == 1 and len(get_args(ann)) > 1:
+        return args[0]
+    return ann
+
+
+def _coerce_env_value(raw: str, ann: Any, env_name: str, field_path: str) -> Any:
+    target = _unwrap_optional(ann)
+    origin = get_origin(target) or target
+    if target is bool:
+        low = raw.strip().lower()
+        if low in {"1", "true", "yes"}:
+            return True
+        if low in {"0", "false", "no"}:
+            return False
+        raise ValueError(
+            f"Invalid env override for {env_name} ({field_path}): expected boolean (true/false/1/0)"
+        )
+    if target is int:
+        try:
+            return int(raw)
+        except ValueError as exc:
+            raise ValueError(
+                f"Invalid env override for {env_name} ({field_path}): expected int"
+            ) from exc
+    if target is float:
+        try:
+            return float(raw)
+        except ValueError as exc:
+            raise ValueError(
+                f"Invalid env override for {env_name} ({field_path}): expected float"
+            ) from exc
+    if origin in (list, tuple, dict):
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise ValueError(
+                f"Invalid JSON in env override {env_name} ({field_path}): expected {origin.__name__}"
+            ) from exc
+        if origin is list:
+            if not isinstance(parsed, list):
+                raise ValueError(
+                    f"Invalid env override {env_name} ({field_path}): expected JSON list, got {type(parsed).__name__}"
+                )
+            return parsed
+        if origin is tuple:
+            if not isinstance(parsed, list):
+                raise ValueError(
+                    f"Invalid env override {env_name} ({field_path}): expected JSON array for tuple, got {type(parsed).__name__}"
+                )
+            return tuple(parsed)
+        if origin is dict:
+            if not isinstance(parsed, dict):
+                raise ValueError(
+                    f"Invalid env override {env_name} ({field_path}): expected JSON object for dict, got {type(parsed).__name__}"
+                )
+            return parsed
+    return raw
 
 
 class AppConfig(BaseModel):
@@ -244,7 +330,7 @@ class AppConfig(BaseModel):
             data = yaml.safe_load(cfg_file.read_text()) or {}
         cfg = cls.model_validate(data)
         cfg.apply_env_overrides()
-        cfg.platform.apply_profile()
+        cfg.platform.apply_profile(cfg.resources)
         return cfg
 
     def apply_env_overrides(self) -> None:
@@ -253,7 +339,6 @@ class AppConfig(BaseModel):
         def _walk(model: BaseModel, prefix: str) -> None:
             for name, field in type(model).model_fields.items():
                 key = f"{prefix}{name}".upper()
-                env_key = key.replace("__", "__")
                 sub = getattr(model, name)
                 env_name = "GAR_" + key.replace(".", "__")
                 if isinstance(sub, BaseModel):
@@ -261,16 +346,9 @@ class AppConfig(BaseModel):
                 elif env_name in os.environ:
                     raw = os.environ[env_name]
                     ann = field.annotation
-                    try:
-                        if ann is bool:
-                            setattr(model, name, raw.lower() in {"1", "true", "yes"})
-                        elif ann is int:
-                            setattr(model, name, int(raw))
-                        elif ann is float:
-                            setattr(model, name, float(raw))
-                        else:
-                            setattr(model, name, raw)
-                    except ValueError:
-                        raise ValueError(f"Invalid env override {env_name}={raw!r} for {prefix}{name}")
+                    coerced = _coerce_env_value(raw, ann, env_name, f"{prefix}{name}")
+                    setattr(model, name, coerced)
+                    if isinstance(model, LLMRoleConfig) and name == "provider":
+                        model.validate_provider()
 
         _walk(self, "")

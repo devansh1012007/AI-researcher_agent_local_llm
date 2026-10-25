@@ -17,6 +17,7 @@ from research_engine.models.enums import (
     ACADEMIC_CATEGORIES, STARTUP_CATEGORIES, BranchCategory,
 )
 from research_engine.models.research import ResearchBranch, ResearchPlan, SearchQuery
+from research_engine.modes.base import get_mode
 from research_engine.prompts.registry import get_prompt
 from research_engine.providers.llm.base import LLMProvider
 from research_engine.storage.repositories import Repositories
@@ -104,8 +105,8 @@ class PlannerWorker:
                 br = ResearchBranch(project_id=project_id, category=cat, question=question,
                                     importance=0.7,
                                     required_evidence="any credible supporting evidence",
-                                    source_preferences=["web"] if self.mode == "startup"
-                                    else ["openalex", "arxiv"])
+                                    source_preferences=list(get_mode(self.mode).source_preferences[:2])
+                                    if self.mode in ("academic", "startup") else ["web"])
                 br.ensure_id()
                 plan.branches.append(br)
         for br in plan.branches:

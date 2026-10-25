@@ -1,8 +1,6 @@
 # GAR example configuration — copy to gar.yaml and adjust.
 # All values here are the safe defaults for a laptop.
 
-mode: academic            # academic | startup
-
 models:
   extractor:
     provider: ollama      # ollama | openai_compatible | llama_cpp | mock
@@ -24,7 +22,7 @@ models:
     max_tokens: 4096
 
 research:
-  mode: academic          # default mode for new projects
+  mode: academic          # academic | startup (default mode for new projects)
   max_iterations: 3
   max_queries_per_iteration: 8
   max_documents: 50
@@ -36,6 +34,7 @@ research:
 network:
   timeout_seconds: 20
   max_retries: 3
+  backoff_base_seconds: 1.5
 
 resources:
   max_parallel_fetches: 5       # IO-bound, safe to parallelize
@@ -44,7 +43,7 @@ resources:
   max_chunk_chars: 6000
 
 search:
-  web_provider: duckduckgo      # duckduckgo | searxng
+  web_provider: duckduckgo      # duckduckgo | searxng | none
   searxng_base_url: ""          # e.g. http://localhost:8080 (recommended for reliability)
   results_per_query: 10
   academic_providers: [openalex, crossref, arxiv]
@@ -59,7 +58,7 @@ storage:
   data_dir: research_data
 
 platform:                     # Phase 4: platform lifecycle (docs/configuration.md)
-  mode: local                 # local | hybrid | online  (env modes, spec #100)
+  mode: local                 # offline | local | online  (env modes, spec #100)
   profile: balanced           # minimal | balanced | high_memory | cpu_only | offline
   scheduler:
     max_jobs: 1               # concurrent deep-research jobs
@@ -75,10 +74,11 @@ platform:                     # Phase 4: platform lifecycle (docs/configuration.
   mcp:
     enabled: true             # `research mcp` serves tools over stdio
   security:
-    local_only: true
-    privacy_mode: false       # true => zero external calls (#99)
+    local_only: false         # true => force LOCAL_ONLY (zero non-loopback calls)
+    privacy_mode: false       # true => force LOCAL_ONLY (#99)
     data_classification: INTERNAL   # PUBLIC|INTERNAL|SENSITIVE|LOCAL_ONLY
     allowed_roots: []         # extra sandbox roots; defaults to data_dir
+    redact_secrets_in_logs: true
   experiments:
     enabled: true
     sandbox: true             # audit-hook + rlimits isolation (#37)

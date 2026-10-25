@@ -16,8 +16,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 _REDACT_PATTERNS = [
-    re.compile(r"(?i)(api[_-]?key|token|secret|password|authorization)\s*[=:]\s*\S+"),
     re.compile(r"(?i)bearer\s+[A-Za-z0-9._\-]+"),
+    re.compile(r"(?i)(api[_-]?key|token|secret|password|authorization)\s*[=:]\s*\S+"),
     re.compile(r"sk-[A-Za-z0-9]{8,}"),
 ]
 _REDACTED = "<redacted>"

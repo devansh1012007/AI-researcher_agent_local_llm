@@ -117,6 +117,8 @@ class EventPersister:
     def __init__(self, store, bus: EventBus):
         # store: PlatformDB (avoids circular import; duck-typed persist_event)
         self.store = store
+        self.persistence_errors = 0
+        self._err_log = logging.getLogger("gar.events.persister")
         sub_id, q = bus.subscribe(None)
         self._sub_id = sub_id
         self._q = q
@@ -127,16 +129,20 @@ class EventPersister:
         import atexit
         atexit.register(self.stop)
 
+    def _persist_one(self, ev: DomainEvent) -> None:
+        try:
+            self.store.persist_event(ev)
+        except Exception as exc:
+            self.persistence_errors += 1
+            self._err_log.warning("EVENT_PERSIST_FAILED type=%s err=%s", ev.type, exc)
+
     def _loop(self) -> None:
         while not self._stop.is_set():
             try:
                 ev = self._q.get(timeout=0.5)
             except queue.Empty:
                 continue
-            try:
-                self.store.persist_event(ev)
-            except Exception:
-                pass  # audit is best-effort at dispatch time; bus still works
+            self._persist_one(ev)
 
     def stop(self) -> None:
         """Stop accepting work and DRAIN pending events (one-shot CLIs exit
@@ -148,10 +154,7 @@ class EventPersister:
                 ev = self._q.get_nowait()
             except queue.Empty:
                 break
-            try:
-                self.store.persist_event(ev)
-            except Exception:
-                pass
+            self._persist_one(ev)
         self._thread.join(timeout=2.0)
 
 

@@ -19,6 +19,7 @@ import json
 import sys
 from typing import Any
 
+from research_engine.models.review import IllegalReviewTransition
 from research_engine.platform.errors import ClassifiedError
 from research_engine.security.permissions import (
     Permission, PermissionDeniedError, PermissionEngine,
@@ -344,7 +345,7 @@ class McpServer:
             else:
                 return _rpc_error(mid, -32601, f"method not found: {method}")
             return {"jsonrpc": "2.0", "id": mid, "result": result}
-        except (NotFoundError, ConflictError, ClassifiedError) as exc:
+        except (NotFoundError, ConflictError, ClassifiedError, IllegalReviewTransition) as exc:
             return _rpc_error(mid, -32000, str(exc))
         except PermissionDeniedError as exc:
             return _rpc_error(mid, -32001, str(exc))
@@ -583,9 +584,30 @@ class McpServer:
                               "text": json.dumps(summary, default=str)}]}
 
     # ---------------------------------------------------------------- io
+    MAX_LINE_BYTES = 1024 * 1024  # 1 MiB (Phase 6.1)
+
     def serve_forever(self) -> None:  # pragma: no cover - stdio loop
-        for line in self.stdin:
-            line = line.strip()
+        while True:
+            raw = self.stdin.readline(self.MAX_LINE_BYTES + 1)
+            if not raw:
+                break
+            raw_bytes = raw.encode("utf-8") if isinstance(raw, str) else bytes(raw)
+            if len(raw_bytes) > self.MAX_LINE_BYTES and not raw.endswith("\n"):
+                # Drain the remainder of the oversized line without buffering it
+                while True:
+                    chunk = self.stdin.readline(65536)
+                    if not chunk or chunk.endswith("\n"):
+                        break
+                resp = _rpc_error(None, -32600, "Invalid Request: line exceeds 1 MiB limit")
+                self.stdout.write(json.dumps(resp, default=str) + "\n")
+                self.stdout.flush()
+                continue
+            if len(raw_bytes) > self.MAX_LINE_BYTES:
+                resp = _rpc_error(None, -32600, "Invalid Request: line exceeds 1 MiB limit")
+                self.stdout.write(json.dumps(resp, default=str) + "\n")
+                self.stdout.flush()
+                continue
+            line = raw.strip()
             if not line:
                 continue
             try:

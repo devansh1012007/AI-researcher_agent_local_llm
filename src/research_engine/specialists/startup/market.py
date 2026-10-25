@@ -18,17 +18,12 @@ import re
 from research_engine.models.analysis import Gap
 from research_engine.models.enums import GapCategory, Severity
 from research_engine.specialists.startup.models import Market, MarketSizeEstimate
-from research_engine.specialists.startup.policies import route_question_kind
+from research_engine.specialists.startup.policies import (
+    classify_numeric_statement, currency_of, money_snippet, parse_money,
+    route_question_kind)
 from research_engine.storage.repositories import Repositories
 
 log = logging.getLogger(__name__)
-
-_NUM_RE = re.compile(r"(?P<cur>[$₹€£])?\s?(?P<val>\d[\d,]*(?:\.\d+)?)\s?"
-                     r"(?P<mag>(?:trillion|billion|million|bn|mn|mm|b|m|k|cr|lakh))?\b", re.I)
-_MAG = {"trillion": 1e12, "billion": 1e9, "bn": 1e9, "b": 1e9,
-        "million": 1e6, "mn": 1e6, "mm": 1e6, "m": 1e6,
-        "k": 1e3, "cr": 1e7, "lakh": 1e5}
-_CURRENCY = {"$": "USD", "₹": "INR", "€": "EUR", "£": "GBP"}
 
 # definition dimensions required before sizing (spec #7)
 _DEFINITION_DIMENSIONS = {
@@ -127,28 +122,16 @@ class MarketAnalyzer:
 
     @staticmethod
     def _size_snippet(claim: str) -> str:
-        m = _NUM_RE.search(claim)
-        if not m:
-            return claim[:80]
-        start = max(0, m.start() - 40)
-        return claim[start:m.end() + 20].strip()
+        return money_snippet(claim)
 
     @staticmethod
     def _parse_value(claim: str) -> float:
-        m = _NUM_RE.search(claim)
-        if not m:
-            return 0.0
-        try:
-            val = float(m.group("val").replace(",", ""))
-        except ValueError:
-            return 0.0
-        mag = m.group("mag")
-        return val * _MAG.get(mag.lower(), 1.0) if mag else val
+        val, _cur, _mag = parse_money(claim)
+        return val
 
     @staticmethod
     def _currency_of(claim: str) -> str:
-        m = re.search(r"[$₹€£]", claim)
-        return _CURRENCY.get(m.group(0), "") if m else ""
+        return currency_of(claim)
 
     @staticmethod
     def _year_of(claim: str) -> str:

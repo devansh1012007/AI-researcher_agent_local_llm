@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from research_engine.core.config import AppConfig, LLMRoleConfig
+from research_engine.core.config import AppConfig, LLMRoleConfig, SUPPORTED_LLM_PROVIDERS
 from research_engine.core.http_policy import build_egress_policy
 from research_engine.providers.llm.base import LLMProvider, MockProvider
 from research_engine.providers.llm.ollama import OllamaProvider
@@ -30,12 +30,14 @@ _PROVIDERS = {
 
 
 def build_provider(cfg: LLMRoleConfig, policy: EgressPolicy | None = None) -> LLMProvider:
+    # P1-1: never fall back silently to MockProvider on an unknown provider name.
     cls = _PROVIDERS.get(cfg.provider)
     if cls is None:
-        log.warning("unknown provider %r; falling back to mock", cfg.provider)
-        provider = MockProvider(cfg)
-    else:
-        provider = cls(cfg)
+        supported = ", ".join(sorted(SUPPORTED_LLM_PROVIDERS))
+        raise ValueError(
+            f"Unknown LLM provider {cfg.provider!r}; supported providers: {supported}"
+        )
+    provider = cls(cfg)
     # Deliver the egress policy to the constructed provider. Stored as a dynamic
     # instance attribute (rather than a constructor kwarg) so `build_provider(cfg)`
     # with `policy=None` (the default, used by existing callers) is completely

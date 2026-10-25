@@ -245,7 +245,8 @@ class PlatformDB:
                     if row is None:
                         continue
                     task = _task_from_row(row)
-                    assert task is not None
+                    if task is None:
+                        raise RuntimeError(f"claimed task {row['id']} disappeared before load")
                     task.status = TaskStatus.RUNNING
                     task.worker_id = worker_id
                     task.attempts += 1          # fencing token (monotonic)
@@ -384,6 +385,13 @@ class PlatformDB:
                  json.dumps(json.loads(task.model_dump_json()), default=str),
                  None, task.updated_at.isoformat(), task_id))
         return task
+
+    def task_status_counts_for_job(self, job_id: str) -> dict[str, int]:
+        rows = self._conn().execute(
+            "SELECT status, COUNT(*) AS n FROM tasks WHERE job_id=? GROUP BY status",
+            (job_id,),
+        ).fetchall()
+        return {r["status"]: int(r["n"]) for r in rows}
 
     def tasks_for_job(self, job_id: str) -> list[JobTask]:
         rows = self._conn().execute(
@@ -524,5 +532,9 @@ def _task_from_row(row) -> JobTask | None:
         return None
     try:
         return JobTask.model_validate(json.loads(row["data"]))
-    except Exception:
+    except Exception as exc:
+        import logging
+        from research_engine.platform.metrics import GlobalMetrics
+        logging.getLogger(__name__).warning("corrupt task row in platform_db: %s", exc)
+        GlobalMetrics.get().registry.incr("platform_db_corrupt_task_rows")
         return None

@@ -23,9 +23,11 @@ log = logging.getLogger(__name__)
 class RetrievalWorker:
     def __init__(self, cfg: AppConfig, repos: Repositories,
                  registry: ProviderRegistry, search_cache: KVCache | None = None):
+        from research_engine.platform.resilience import FailoverExecutor
         self.cfg = cfg
         self.repos = repos
         self.registry = registry
+        self.failover = FailoverExecutor()
         self.search_cache = search_cache or KVCache(
             Path(cfg.storage.data_dir) / "_global" / "search_cache.sqlite")
 
@@ -107,10 +109,12 @@ class RetrievalWorker:
             return [], ""
         try:
             hits = provider.search(query_text, max_results=self.cfg.search.results_per_query)
+            self.failover.breaker_for(provider_name).record_success()
         except Exception as exc:
             # The provider contract says raise on failure; catch broadly
             # anyway so a third-party provider that violates it is still
             # recorded rather than silently returning nothing.
+            self.failover.breaker_for(provider_name).record_failure()
             log.warning("provider %s failed: %s", provider_name, exc)
             return [], f"{provider_name}: {type(exc).__name__}: {exc}"
         self.search_cache.put(

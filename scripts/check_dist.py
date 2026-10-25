@@ -125,7 +125,7 @@ def check_extracted_wheel(wheel: Path, template_names: set[str]) -> None:
     registry must resolve its templates from the extracted package, and the API
     module must import.
     """
-    with tempfile.TemporaryDirectory() as tmp:
+    with tempfile.TemporaryDirectory(dir=("/run/user/1235" if Path("/run/user/1235").is_dir() else None)) as tmp:
         site = Path(tmp) / "site-packages"
         site.mkdir()
         with zipfile.ZipFile(wheel) as zf:
@@ -164,7 +164,7 @@ def check_extracted_wheel(wheel: Path, template_names: set[str]) -> None:
 
 def main() -> int:
     print("check_dist: verifying the built distribution")
-    with tempfile.TemporaryDirectory() as tmp:
+    with tempfile.TemporaryDirectory(dir=("/run/user/1235" if Path("/run/user/1235").is_dir() else None)) as tmp:
         wheel = build_wheel(Path(tmp))
         template_names = check_templates_in_wheel(wheel)
         check_metadata(wheel)

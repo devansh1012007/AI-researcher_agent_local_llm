@@ -45,13 +45,20 @@ def classify_pain(text: str) -> list[str]:
 
 def pain_evidence_class(claim_text: str) -> str:
     """Classify the STRONGEST evidence form present in a pain claim."""
-    t = claim_text.lower()
+    t = (claim_text or "").lower()
+    # P3-6: Vendor funding/valuation announcements ("Company X raised $20M Series A
+    # to build payment software") describe investor capital, NOT customer payment.
+    if re.search(r"\b(rais(?:ed|es|ing)|funding(?: round)?|series [a-f]|seed round|valuation|valued at|venture capital|led by .* ventures?)\b", t) and \
+            not re.search(r"\b(customers?|users?|clients?|buyers?|retailers?|merchants?|clinics?|shops?)\s+(?:paid|paying|pays|spent|spend)\b", t):
+        return "reported_pain"
     # Vendor pricing describes the SELLER's number, not customer spending;
     # it must never count as behavioral demand evidence (spec #14/#43).
     if re.search(r"\b(price[sd]?|pricing|charges?|lists? at)\b", t) and \
             not re.search(r"\b(paid|paying|pays|spends?|budget)\b", t):
         return "reported_pain"
-    if re.search(r"\b(paid|paying|pays?|payment|invoice|spent \$?₹?€?£?\d|spends? \$?₹?€?£?\d)", t):
+    # Note: noun phrases like "payment software" or "payment gateway" are product
+    # category names, not customer payment behavior; require payment verbs or invoice/spent.
+    if re.search(r"\b(paid|paying|pays?|invoiced?|spent \$?₹?€?£?\d|spends? \$?₹?€?£?\d|made a payment|payment of \$?₹?€?£?\d)", t):
         return "actual_payment"
     if re.search(r"\b(switch\w+ from|migrat\w+ from|cancel\w+|churn\w* from|left \w+ for)\b", t):
         return "switching_behavior"
@@ -297,3 +304,30 @@ def parse_money(text: str):
     # funding amounts are real values but are NOT market sizes; callers must
     # consult classify_numeric_statement() before using them as such.
     return val, cur, mag
+
+
+_AMOUNT_RE = re.compile(r"(?P<cur>[$₹€£])\s?(?P<amt>\d[\d,]*(?:\.\d+)?)")
+_MAGNITUDE_TAIL_RE = re.compile(r"\s?(?:bn|b|mn|mm|m|million|billion|trillion)(?![a-z])", re.I)
+
+
+def is_magnitude_price(quote: str, match: re.Match) -> bool:
+    """True when the matched amount is actually a funding/market-size
+    magnitude ($10M, $1.2B, $24 billion) rather than a seat/unit price."""
+    tail = _MAGNITUDE_TAIL_RE.match((quote or "")[match.end():])
+    return bool(tail)
+
+
+def currency_of(text: str) -> str:
+    """Return canonical ISO currency code for the first currency symbol in `text`."""
+    m = re.search(r"[$₹€£]", text or "")
+    return _CURRENCY_BY_SYMBOL.get(m.group(0), "") if m else ""
+
+
+def money_snippet(text: str, window_before: int = 40, window_after: int = 20) -> str:
+    """Return a compact snippet around the first canonical money match in `text`."""
+    s = text or ""
+    m = _MONEY_RE.search(s)
+    if not m:
+        return s[:80]
+    start = max(0, m.start() - window_before)
+    return s[start:m.end() + window_after].strip()

@@ -2,6 +2,18 @@
 
 LLMs may propose decisions; they never own persistence or control flow.
 Structured outputs are always parsed -> validated -> repaired -> fallback.
+
+Contract for ``LLMProvider.structured(system, user, schema, max_attempts)``:
+1. Parse and schema validation failures (no JSON in model output, malformed JSON,
+   or Pydantic ``ValidationError``) are retried up to ``max_attempts`` times with
+   repair instructions. If all attempts fail schema validation, ``structured()``
+   returns ``(None, errors)`` without raising.
+2. Provider and transport failures (e.g., ``LLMError``, ``RuntimeError`` from
+   ``EgressPolicy``, connection errors, HTTP 5xx/429 timeouts) are NOT schema
+   failures and MUST propagate to the caller so callers can distinguish a model
+   outage from a valid empty output or schema repair failure (INV-012).
+3. A valid response whose parsed fields are empty (e.g., ``assumptions=[]``)
+   returns ``(validated_model, errors)`` where ``validated_model`` is non-None.
 """
 from __future__ import annotations
 
@@ -39,7 +51,8 @@ class LLMProvider(ABC):
     # -- structured output -------------------------------------------------
     def structured(self, system: str, user: str, schema: type[T],
                    max_attempts: int = 3) -> tuple[T | None, list[str]]:
-        """Return (validated_model|None, errors). Never raises on bad output."""
+        """Return (validated_model|None, errors) on schema/parse failure;
+        propagates provider/transport exceptions (LLMError, RuntimeError, OSError)."""
         errors: list[str] = []
         prompt = user
         for attempt in range(1, max_attempts + 1):

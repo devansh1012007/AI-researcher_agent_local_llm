@@ -97,11 +97,13 @@ class ValidationDesigner:
         return tests
 
     def persist_tests(self, project_id: str, h: Hypothesis,
-                      methodology_id: str, tests: list[ValidationTest]) -> list[Experiment]:
+                      methodology_id: str, tests: list[ValidationTest],
+                      opportunity_id: str = "") -> list[Experiment]:
         experiments = []
         for i, t in enumerate(tests):
             x = Experiment(project_id=project_id, hypothesis_id=h.id,
                            methodology_id=methodology_id,
+                           opportunity_id=opportunity_id,
                            title=f"[{t.test_type}] {t.title}",
                            risk_level=t.risk_level,
                            status="DESIGNED")

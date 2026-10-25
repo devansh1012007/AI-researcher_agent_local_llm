@@ -13,10 +13,14 @@ from pathlib import Path
 log = logging.getLogger(__name__)
 
 
+from research_engine.platform.obs_logging import _deep_redact
+
+
 class EventLog:
-    def __init__(self, project_dir: Path):
+    def __init__(self, project_dir: Path, redact_secrets: bool = True):
         self.path = project_dir / "events.jsonl"
         self.md_path = project_dir / "reports" / "research_log.md"
+        self.redact_secrets = redact_secrets
         self._lock = threading.Lock()
         self.md_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -24,6 +28,10 @@ class EventLog:
                task_id: str = "", duration_ms: float = 0.0,
                status: str = "ok", metadata: dict | None = None,
                error: str = "", human_line: str = "") -> dict:
+        from research_engine.platform.obs_logging import redact
+        meta_val = _deep_redact(metadata or {}) if self.redact_secrets else (metadata or {})
+        err_val = redact(error) if (self.redact_secrets and error) else error
+        line_val = redact(human_line) if (self.redact_secrets and human_line) else human_line
         entry = {
             "ts": datetime.now(timezone.utc).isoformat(),
             "project_id": project_id,
@@ -32,15 +40,15 @@ class EventLog:
             "task_id": task_id,
             "duration_ms": round(duration_ms, 1),
             "status": status,
-            "metadata": metadata or {},
-            "error": error,
+            "metadata": meta_val,
+            "error": err_val,
         }
         with self._lock:
             with self.path.open("a", encoding="utf-8") as f:
                 f.write(json.dumps(entry, default=str) + "\n")
-            if human_line:
+            if line_val:
                 with self.md_path.open("a", encoding="utf-8") as f:
-                    f.write(human_line + "\n")
+                    f.write(line_val + "\n")
         return entry
 
     def read_events(self) -> list[dict]:

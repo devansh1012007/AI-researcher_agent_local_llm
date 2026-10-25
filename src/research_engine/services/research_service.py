@@ -79,12 +79,18 @@ class ProjectService:
                 pid = data.get("id")
                 if not pid or not self._has_db_row(pid):
                     continue   # orphaned workspace: not a real project
-                out.append({"id": pid, "question": data.get("question_raw"),
+                q_raw = data.get("question_raw") or data.get("question") or ""
+                created = data.get("created_at") or data.get("updated_at") or ""
+                updated = data.get("updated_at") or created
+                out.append({"id": pid, "question": q_raw,
+                            "question_raw": q_raw,
                             "state": data.get("state"),
                             "mode": data.get("mode"),
-                            "updated_at": data.get("updated_at")})
+                            "created_at": created,
+                            "updated_at": updated})
             except (OSError, ValueError, KeyError):
                 continue
+        out.sort(key=lambda r: (r.get("created_at") or "", r.get("id") or ""), reverse=True)
         return out
 
     def _has_db_row(self, project_id: str) -> bool:
@@ -182,15 +188,6 @@ class ProjectService:
             raise NotFoundError("project", project_id) from exc
 
 
-class NotFoundError(ClassifiedError):
-    def __init__(self, kind: str, ident: str):
-        super().__init__(ErrorCategory.USER, f"{kind} not found: {ident}")
-
-
-class ConflictError(Exception):
-    pass
-
-
 class ResearchService:
     def __init__(self, ctx):
         self.ctx = ctx
@@ -236,8 +233,12 @@ class ResearchService:
                               "url": e.source_url} for e in getattr(resp, "evidence", [])]}
 
     def search_memory(self, project_id: str, req: QueryRequest) -> list[dict]:
+        from research_engine.core.orchestrator import Orchestrator
         from research_engine.memory.retrieval import build_retriever
-        orch = Orchestrator.load(self.ctx.cfg, project_id)
+        try:
+            orch = Orchestrator.load(self.ctx.cfg, project_id)
+        except FileNotFoundError as exc:
+            raise NotFoundError("project", project_id) from exc
         retr = build_retriever(self.ctx.cfg, orch.repos)
         result = retr.retrieve(project_id, req.query, top_k=req.top_k)
         out = []

@@ -160,6 +160,51 @@ MUTATIONS = [
      '''            _last_random = 0
             if _last_random >= _RANDOM_LIMIT:''',
      "tests/unit/test_stage1_dead_legs.py::TestUlidIds"),
+
+    # M-20: duplicate_rate must use duplicate_ratio, not rejected_ratio (C18 / 0.3).
+    ("M-20", "evals/metrics/eval_metrics.py",
+     '''    s.duplicate_rate = repos.evidence.duplicate_ratio(project_id)''',
+     '''    s.duplicate_rate = repos.evidence.rejected_ratio(project_id)''',
+     "tests/evaluation/test_eval_framework.py::test_duplicate_rate_uses_duplicate_ratio_not_rejection"),
+
+    # M-21: P3-1 rendered report citation coverage must verify [ev_...] against verified_ev_ids.
+    ("M-21", "evals/metrics/eval_metrics.py",
+     '''                if any(eid in verified_ev_ids for eid in eids):''',
+     '''                if True:''',
+     "tests/unit/test_phase5_research_quality.py::test_p3_1_citation_coverage_and_report_citation_coverage"),
+
+    # M-22: P3-2 research_gain must discount duplicate quote re-ingestion.
+    ("M-22", "src/research_engine/core/orchestrator.py",
+     '''            raw_ev_accepted * (1.0 - max(0.0, min(1.0, float(getattr(cur, "duplicate_rate", 0.0))))),''',
+     '''            float(raw_ev_accepted),''',
+     "tests/unit/test_phase5_research_quality.py::test_p3_2_research_gain_ignores_duplicate_quote_reingestion"),
+
+    # M-23: P3-3 consolidate_claims duplicate count must be recorded on ResearchMetrics.
+    ("M-23", "src/research_engine/core/orchestrator.py",
+     '''        m.duplicate_claims_this_iter = int(dup_by_iter.get(it, 0))''',
+     '''        m.duplicate_claims_this_iter = 0''',
+     "tests/unit/test_phase5_research_quality.py::test_p3_3_consolidate_claims_dup_count_persisted_on_metrics"),
+
+    # M-24: P3-6 pain_evidence_class must not classify vendor funding/valuation as actual_payment.
+    ("M-24", "src/research_engine/specialists/startup/policies.py",
+     '''    if re.search(r"\\b(rais(?:ed|es|ing)|funding(?: round)?|series [a-f]|seed round|valuation|valued at|venture capital|led by .* ventures?)\\b", t) and \\
+            not re.search(r"\\b(customers?|users?|clients?|buyers?|retailers?|merchants?|clinics?|shops?)\\s+(?:paid|paying|pays|spent|spend)\\b", t):
+        return "reported_pain"''',
+     '''    if False:
+        return "reported_pain"''',
+     "tests/unit/test_phase5_research_quality.py::test_p3_6_pain_evidence_class_separates_vendor_funding_from_customer_payment"),
+
+    # M-25: P3-7 P4 pattern strength must be derived from evidence rather than hardcoded 0.45.
+    ("M-25", "src/research_engine/specialists/startup/opportunities.py",
+     '''                "strength": p4_strength,''',
+     '''                "strength": 0.45,''',
+     "tests/unit/test_phase5_research_quality.py::test_p3_7_p4_opportunity_strength_derived_from_evidence"),
+
+    # M-26: P3-9 DecisionEngine.readiness must scope experiments to opportunity_id.
+    ("M-26", "src/research_engine/specialists/startup/decisions.py",
+     '''                if getattr(e, "opportunity_id", "") == opportunity_id''',
+     '''                if True''',
+     "tests/unit/test_phase5_research_quality.py::test_p3_9_readiness_scopes_experiments_to_opportunity_id"),
 ]
 
 
@@ -232,7 +277,7 @@ def main(selected: list[str]) -> int:
         try:
             target.write_text(original.replace(old, new, 1))
             _invalidate_bytecode(target)
-            rc = _run([str(ROOT / ".venv" / "bin" / "python"), "-m",
+            rc = _run([sys.executable, "-m",
                        "pytest", "-x", "-q", tests])
             detected = rc != 0
             results.append((mid, f"tests {'DETECTED' if detected else 'SURVIVED'}",

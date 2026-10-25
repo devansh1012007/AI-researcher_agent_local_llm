@@ -185,11 +185,14 @@ class ExperimentRepo(_GenericRepo):
     model = Experiment
 
     def _index_cols(self, x: Experiment):
-        return {"hypothesis_id": x.hypothesis_id, "status": x.status,
-                "risk_level": x.risk_level}
+        return {"hypothesis_id": x.hypothesis_id, "opportunity_id": x.opportunity_id,
+                "status": x.status, "risk_level": x.risk_level}
 
     def awaiting_approval(self, project_id: str) -> list[Experiment]:
         return self.all(project_id, "status='READY_FOR_HUMAN_APPROVAL'")
+
+    def for_opportunity(self, project_id: str, opportunity_id: str) -> list[Experiment]:
+        return self.all(project_id, "opportunity_id=?", (opportunity_id,))
 
 
 class ExperimentResultRepo(_GenericRepo):

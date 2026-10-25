@@ -9,7 +9,7 @@ pinned to immutable commit SHAs; the Python version is explicitly set to 3.12.
 | Job | Command | Purpose |
 |---|---|---|
 | Offline test suite | `python -m pytest` | Complete deterministic test suite, including the focused sandbox regression |
-| Critical mutation checks | `python scripts/mutation_check.py` | Every registered critical mutation must be detected; modified source must be restored byte-identically |
+| Critical mutation checks | `python scripts/mutation_check.py` | Every registered critical mutation (`M-1` through `M-26`) must be detected; modified source must be restored byte-identically |
 | Original audit reproductions | `python scripts/reaudit.py` | Replay original stabilization reproductions; this script also invokes mutation checks internally |
 | Built wheel verification | `python scripts/check_dist.py` | Inspect the actual wheel for prompt templates, dependency metadata, and importability |
 

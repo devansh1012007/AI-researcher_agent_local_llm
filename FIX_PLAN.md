@@ -1,8 +1,10 @@
 # FIX PLAN — verified defect backlog and remediation phases
 
-**Status:** in progress. **W1, W2 and W3 are implemented and independently
-reviewed.** Each fixed item is marked **FIXED (Wn)**; the wave table at §7
-tracks progress. Everything else is unimplemented.
+**Status:** **W1 through W10 (Phases 0–6) are implemented and verified across
+all local gates (`pytest`, `mutation_check.py` M-1..M-26, `reaudit.py` 14/14,
+`check_dist.py`, `run_eval.py --offline`, `run_goldset.py`).** See
+`IMPLEMENTATION_STATUS.md` for the four-state verification matrix (implementation,
+focused regression, full-gate validation, and review status).
 
 | Wave | Item | Result | Verified by |
 |---|---|---|---|
@@ -826,13 +828,13 @@ boundary, so P0-2 is a P0 and gets an explicit regression test.
 | **W1** | P0-1 packaging (+ P1-11 hermeticity side-fix) | Unblocks clean installs and the container; independent of everything else | **DONE**: wheel contains 16/16 template files; `research doctor` exits 0 from a clean install; `scripts/check_dist.py` passes; 292 passed / 1 skipped at the time of W1; zero outbound sockets |
 | **W2** | P0-2 auth bypass | With D-3 this is the *only* auth boundary; must land before the container runs anywhere real | **DONE**: 401 without a token on a real `0.0.0.0` bind; INV-014 row + M-7/M-8/M-9 mutations all DETECTED |
 | **W3** | P0-4 failure≠empty (search) | Small, self-contained, unblocks honest convergence reporting | **DONE**: a total outage through the real orchestrator yields PROVIDER_DEGRADED; M-2 re-anchored, M-10..M-15 added; 308 passed / 1 skipped |
-| **W4** | P0-5 sandbox escape | Security; self-contained | Override-write test green; existing sandbox suite green |
-| **W5** | P0-3 ULID migration | Now a one-function change, but it touches every entity creation path indirectly — needs its own wave and a full-suite run | Restart test green; monotonicity test green; `data_repair` ordering test green; full suite green |
-| **W6** | P0-6 config honesty (D-2) | Needs the provider registry; implement the gate, delete `respect_robots` | New test: LOCAL_ONLY ⇒ no network providers registered; unknown mode ⇒ LOCAL_ONLY |
-| **W7** | P1-1…P1-7 | Contract/correctness batch; each is small | Per-item tests + full suite |
-| **W8** | P2-1/P2-2 test harness + property layer | Prevents recurrence of the BUG-03/BUG-06 class | Conformance suite green |
-| **W9** | P2-3…P2-7 dead code, doc drift | Cleanup; do it after behaviour is correct so the docs describe the final state | `scripts/reaudit.py` still 14/14; `mutation_check.py` still 15/15+ |
-| **W10** | P3-1…P3-9 metric honesty | Changes measured numbers; needs mutation-first | Each scorer has a mutation in `mutation_check.py` that is detected |
+| **W4** | P0-5 sandbox escape | Security; self-contained | **DONE**: Closure-isolated write root in `experiments/runner.py`; `test_sandbox_override_write.py` green |
+| **W5** | P0-3 ULID migration (`C07`, `C08`, `C22`) | Collision-free monotonic ULIDs + payload `created_at` ordering | **DONE**: `core/ids.py` monotonic ULIDs, `M-19` DETECTED, `test_stage2_id_ordering.py` green |
+| **W6** | P0-6 config honesty & egress (`C09`–`C12`, `C23`) | Enforced `EgressPolicy` across all HTTP call sites & redirect hops; `respect_robots` removed | **DONE**: `test_egress_enforcement.py` (24 tests) and `test_local_only_gating.py` green |
+| **W7** | P1-1…P1-16 | Config/provider/CLI truthfulness, dedicated prompt templates, API error schema, DTOs, redaction, search failure semantics | **DONE**: `test_phase2a_config_providers.py`, `test_phase2b_prompts_llm.py`, `test_phase2c_api_dto_redaction.py`, `test_phase2d_duckduckgo_parsing.py` green; wheel ships 22 template files |
+| **W8** | P2-1/P2-2 + Stage 4 (`C13`–`C16`) | Dynamic 43-route API & 30-tool MCP conformance + docs parity; property-style invariants; analyst review overlay | **DONE**: `test_interface_contracts.py`, `test_system_invariants.py`, `test_stage4_review.py` green |
+| **W9** | P2-3…P2-7 + Phase 6 | Silent-except & `assert` removal, canonical money parser, doc drift, `/health` events check, MCP 1 MiB line cap, `freshness_summary` & `ReportRepo` wiring | **DONE**: `test_phase3_resilience_health.py` & `test_phase6_transport_freshness.py` green; `reaudit.py` 14/14 |
+| **W10** | P3-1…P3-9 + Stage 5 (`C17`–`C21`, `C24`) | Research-quality metrics, deduplicated `research_gain`, `dup_count` wiring, hypothesis lifecycle/tie-break, funding vs payment, P4 strength, `Experiment.opportunity_id` | **DONE**: `test_phase5_research_quality.py` green; `M-1`..`M-26` (26/26) DETECTED; `run_eval.py --offline` 17/17 PASS |
 
 **Per wave, the AGENTS.md §2 workflow applies**: context subagent → atomic
 phase → independent review subagent → tests → next phase. No wave is declared

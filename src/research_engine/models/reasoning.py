@@ -137,6 +137,7 @@ class Experiment(Entity):
 
     hypothesis_id: str = ""
     methodology_id: str = ""
+    opportunity_id: str = ""
     title: str = ""
     risk_level: str = "LOW_RISK"        # LOW_RISK | MEDIUM_RISK | HIGH_RISK
     status: str = "DESIGNED"

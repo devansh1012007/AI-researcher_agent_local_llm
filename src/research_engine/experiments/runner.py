@@ -70,7 +70,8 @@ class LocalExperimentRunner:
         exp = rr.experiments.get(experiment_id)
         if exp is None:
             raise ValueError(f"experiment not found: {experiment_id}")
-        if exp.awaiting_approval and not exp.approved_by_user:
+        req_approval = bool(self.cfg.platform.experiments.require_human_approval)
+        if req_approval and (exp.awaiting_approval or exp.requires_human_approval) and not exp.approved_by_user:
             return {"status": "BLOCKED",
                     "reason": "awaiting human approval (spec #45)"}
         spec = self._spec_from_methodology(rr, exp)
@@ -95,7 +96,7 @@ class LocalExperimentRunner:
         ex_cfg = self.cfg.platform.experiments
         root = Path(self.cfg.storage.data_dir).resolve()
         _ = ex_cfg  # referenced below via self.cfg.platform.experiments
-        sandbox = PathSandbox.for_data_dir(root)
+        sandbox = PathSandbox.for_data_dir(root, self.cfg.platform.security.allowed_roots)
         workdir = root / project_id / "experiments" / \
             (experiment_id or f"run_{int(time.time())}")
         workdir.mkdir(parents=True, exist_ok=True)
@@ -126,11 +127,14 @@ class LocalExperimentRunner:
         network_on = bool(spec.get("network_enabled", ex_cfg.network_enabled))
 
         preexec = self._limits(mem_bytes, cpu_s) if sys.platform == "linux" else None
+        guard_prefix = (
+            "from research_engine.experiments._sandbox_guard import _guard\n"
+            "import sys as _sys\n"
+            "_sys.addaudithook(_guard)\n"
+            if ex_cfg.sandbox else ""
+        )
         cmd = [sys.executable, "-I", "-c",
-               "from research_engine.experiments._sandbox_guard import _guard\n"
-               "import sys as _sys\n"
-               "_sys.addaudithook(_guard)\n"
-               + _RUNNER_TEMPLATE.format(entry=str(entry), argv=f"experiment.py")]
+               guard_prefix + _RUNNER_TEMPLATE.format(entry=str(entry), argv="experiment.py")]
         child_env = self._child_env()
         child_env["GAR_EXPERIMENT_WORKDIR"] = str(workdir)
         if network_on:
