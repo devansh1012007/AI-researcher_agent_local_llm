@@ -71,3 +71,17 @@ research answer <project_id> <question_id> "Automotive EV packs"
 
 - **REST API**: `GET /engines`, `GET /engines/{name}`, `GET /projects/{project_id}/questions`, `POST /projects/{project_id}/questions/{question_id}/answer`
 - **MCP Tools**: `list_engines`, `get_pending_questions`, `answer_question`
+
+## 5. Included Example Researcher Packs (All 3 Ways)
+
+The repository ships three working `example_researcher` packs filled with example/jibrish domain rules (`florb`, `zibble`, `blargle`, `wumpus`, `sprocket`, `qux`) to illustrate all three ways of adding a new researcher agent:
+
+1. **Way 1 — Built-in Engine Pack (`src/research_engine/engines/builtin/example_researcher/`)**:
+   - Registered as `example_researcher` (`source_layer="builtin"`).
+   - Defines branches `EXAMPLE_ALPHA`, `EXAMPLE_BETA`, `EXAMPLE_JIBRISH`, and `EXAMPLE_WIDGETS`, domain schema attributes (`example_widget_id`, `jibrish_score`, `florb_category`, `example_metric_note`), phase-scoped skills (`example_discovery.md`, `example_planning_jibrish.md`, `example_jibrish_rules.md`), and a pack-local `prompts/evidence_extractor/v1.txt` overlay.
+2. **Way 2 — Workspace / External Directory Pack (`engines/example_researcher_workspace/`)**:
+   - Registered as `example_researcher_workspace` (`source_layer="workspace"` when discovered from `./engines/`, or `source_layer="path"` when loaded via `load_engine_from_dir("engines/example_researcher_workspace")`).
+   - Defines branches `EXAMPLE_SPROCKETS`, `JIBRISH_QUX_FLOW`, and `EXAMPLE_FOOBAR_GAPS` with custom sprocket/qux attributes without touching `src/`.
+3. **Way 3 — Inherited / Scaffolded Engine Pack (`engines/example_researcher_inherited/`)**:
+   - Registered as `example_researcher_inherited` (`extends: example_researcher`).
+   - Inherits all 4 branches, loop steps, and safety rules from `example_researcher` while overriding `clarifier.required_inputs` (`turbo_wumpus_seed`), `tunables` (`max_iterations: 4`, `max_queries_per_iteration: 10`), `schema.json` (`turbo_wumpus_mode`), and `skills/inherited_jibrish_extension.md`.

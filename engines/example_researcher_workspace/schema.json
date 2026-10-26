@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ExampleResearcherWorkspaceAttributes",
+  "description": "Domain schema for Way 2 workspace example researcher pack.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "sprocket_id": {
+      "type": "string",
+      "description": "Example sprocket identifier (e.g., SPROCKET-EX-77, GIZMO-QUX-3)."
+    },
+    "qux_blargle_level": {
+      "type": "string",
+      "enum": ["low_qux", "medium_blargle", "high_plugh", "extreme_xyzzy"]
+    },
+    "jibrish_tag": {
+      "type": "string",
+      "description": "Arbitrary example jibrish classification string."
+    }
+  }
+}

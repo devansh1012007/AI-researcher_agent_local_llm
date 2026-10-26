@@ -1,0 +1,31 @@
+schema_version: 1
+name: example_researcher_inherited
+display_name: "Example Researcher Inherited Pack (Way 3 Extends & Scaffold)"
+version: "1.0.0"
+description: "Inherited/scaffolded example researcher pack demonstrating Way 3 (extending 'example_researcher' via 'extends: example_researcher' and overriding specific tunables, skills, and schema attributes)."
+extends: example_researcher
+
+clarifier:
+  hint: "specialized turbo-jibrish sub-researcher extending example_researcher for deep wumpus and snorf analysis"
+  prompt_template: "problem_clarifier"
+  required_inputs:
+    - "example_target_widget"
+    - "example_jibrish_horizon"
+    - "turbo_wumpus_seed"
+  ask_user_when:
+    - "The turbo_wumpus_seed parameter or snorf calibration mode is missing"
+
+extraction:
+  schema_hint: "claim; quote; confidence; entities; tags; kind; numbers; example_widget_id; jibrish_score; florb_category; turbo_wumpus_mode"
+  prompt_template: "evidence_extractor"
+  domain_schema: "schema.json"
+  require_verbatim_quote: true
+  require_claim_support: true
+
+tunables:
+  max_iterations: 4
+  max_queries_per_iteration: 10
+  results_per_query: 6
+  ask_user_enabled: true
+  ask_user_blocking: false
+  max_user_questions_per_run: 4

@@ -1,0 +1,65 @@
+schema_version: 1
+name: example_researcher_workspace
+display_name: "Example Researcher Workspace Pack (Way 2 Directory/Path/Env)"
+version: "1.0.0"
+description: "Workspace-level example researcher engine pack demonstrating Way 2 (adding a new researcher via the local ./engines/ directory, GAR_ENGINES_DIR, or a direct filesystem path without touching src/)."
+extends: generic
+
+clarifier:
+  hint: "workspace example researcher analyzing sprockets, gizmos, qux-blargles, and example jibrish"
+  prompt_template: "problem_clarifier"
+  required_inputs:
+    - "example_sprocket_model"
+    - "jibrish_qux_variant"
+  ask_user_when:
+    - "The example sprocket model or qux-blargle environment is unspecified"
+
+planning:
+  fallback_to_branches: true
+  source_preferences:
+    - web
+    - documentation
+    - forum
+  branches:
+    - category: EXAMPLE_SPROCKETS
+      default_question: "How are example sprockets and gizmo assemblies configured for: {question}?"
+      importance: 0.9
+      required_evidence: "documented example sprocket specs, gizmo diagrams, or verbatim setup logs"
+      route: [web, documentation]
+      fallback: true
+    - category: JIBRISH_QUX_FLOW
+      default_question: "What qux-blargle flow rates and plugh oscillations occur in: {question}?"
+      importance: 0.85
+      required_evidence: "measured qux-blargle telemetry, plugh waveforms, or example benchmark tables"
+      route: [web, openalex, documentation]
+      fallback: true
+    - category: EXAMPLE_FOOBAR_GAPS
+      default_question: "What foobar bottlenecks, xyzzy edge cases, or jibrish complaints exist for: {question}?"
+      importance: 0.8
+      required_evidence: "verbatim forum reports, issue tracker complaints, or negative example evidence"
+      route: [forum, web, documentation]
+      fallback: true
+
+extraction:
+  schema_hint: "claim; quote; confidence; entities; tags; kind; numbers; sprocket_id; qux_blargle_level; jibrish_tag"
+  prompt_template: "evidence_extractor"
+  domain_schema: "schema.json"
+  require_verbatim_quote: true
+  require_claim_support: true
+
+analysis:
+  structural_checks:
+    - source_diversity
+    - negative_evidence
+    - benchmarks
+  specialist_pipeline: null
+
+tunables:
+  max_iterations: 2
+  max_queries_per_iteration: 6
+  max_documents: 30
+  max_sources_total: 90
+  results_per_query: 6
+  ask_user_enabled: true
+  ask_user_blocking: false
+  max_user_questions_per_run: 2

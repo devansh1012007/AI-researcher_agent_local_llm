@@ -1,0 +1,151 @@
+schema_version: 1
+name: example_researcher
+display_name: "Example Researcher (Builtin Demo & Jibrish Lab)"
+version: "1.0.0"
+description: "Built-in example researcher engine pack filled with example workflows, placeholder widgets, and jibrish domain rules to demonstrate Way 1 (built-in engine pack registration)."
+extends: null
+
+clarifier:
+  hint: "example researcher domain investigating florb widgets, zibble metrics, and example jibrish phenomena"
+  prompt_template: "problem_clarifier"
+  required_inputs:
+    - "example_target_widget"
+    - "example_jibrish_horizon"
+  ask_user_when:
+    - "The prompt mentions an example widget without specifying its florb tier or jibrish index"
+    - "Multiple conflicting example baselines (e.g., Blargle-v1 vs. Zibble-v2) could apply"
+
+planning:
+  fallback_to_branches: true
+  source_preferences:
+    - web
+    - documentation
+    - openalex
+    - forum
+  branches:
+    - category: EXAMPLE_ALPHA
+      default_question: "What are the foundational example properties and primary florb specs of: {question}?"
+      importance: 0.9
+      required_evidence: "verbatim example specifications, florb measurements, or primary documentation quotes"
+      route: [web, documentation, openalex]
+      fallback: true
+    - category: EXAMPLE_BETA
+      default_question: "How does {question} perform under example stress benchmarks and zibble workloads?"
+      importance: 0.85
+      required_evidence: "quantitative example benchmark numbers, latency blargles, or throughput zibbles"
+      route: [openalex, web, arxiv]
+      fallback: true
+    - category: EXAMPLE_JIBRISH
+      default_question: "What jibrish anomalies, snorf edge-cases, or wumpus failure modes occur in: {question}?"
+      importance: 0.8
+      required_evidence: "documented jibrish failure logs, community forum reports, or counter-evidence quotes"
+      route: [forum, web, documentation]
+      fallback: true
+    - category: EXAMPLE_WIDGETS
+      default_question: "Which competing example widgets or alternative florb architectures compare to: {question}?"
+      importance: 0.75
+      required_evidence: "side-by-side example widget comparisons, pricing blargles, or architecture notes"
+      route: [web, company, documentation]
+      fallback: false
+
+extraction:
+  schema_hint: "claim; quote; confidence; entities; tags; kind; numbers; example_widget_id; jibrish_score; florb_category; example_metric_note"
+  prompt_template: "evidence_extractor"
+  domain_schema: "schema.json"
+  require_verbatim_quote: true
+  require_claim_support: true
+
+analysis:
+  structural_checks:
+    - source_diversity
+    - negative_evidence
+    - benchmarks
+    - baselines
+    - method_comparison
+  specialist_pipeline: null
+
+loop:
+  setup:
+    - step: clarify
+      pause_after: false
+      gate: AFTER_PROBLEM_DEFINITION
+    - step: ask_user
+      blocking: false
+      max_questions: 3
+    - step: plan
+      pause_after: false
+      gate: AFTER_INITIAL_RESEARCH_PLAN
+    - step: generate_queries
+  per_iteration:
+    - step: search
+      budget: max_queries_per_iteration
+    - step: fetch_and_parse
+      max_parallel: max_parallel_fetches
+    - step: extract_evidence
+    - step: verify_and_dedup
+    - step: detect_contradictions
+    - step: detect_gaps
+    - step: evaluate_convergence
+      pause_after: false
+    - step: generate_followups
+  stop_when:
+    - metric: new_evidence_rate
+      op: "<="
+      value: 0.12
+      after_iteration: 2
+    - metric: duplicate_rate
+      op: ">="
+      value: 0.68
+      after_iteration: 1
+  synthesis:
+    - step: write_reports
+
+reports:
+  core:
+    - problem.md
+    - research_plan.md
+    - info.md
+    - sources.md
+    - gaps.md
+    - research_log.md
+    - source_trail.md
+  domain:
+    - id: literature_review
+      file: literature_review.md
+  intelligence:
+    - id: evidence_map
+      file: evidence_map.md
+    - id: contradiction_report
+      file: contradiction_report.md
+    - id: benchmark_analysis
+      file: benchmark_analysis.md
+  reasoning:
+    - id: hypotheses
+      file: hypotheses.md
+    - id: assumptions
+      file: assumptions.md
+    - id: decision_analysis
+      file: decision_analysis.md
+
+tunables:
+  max_iterations: 3
+  max_queries_per_iteration: 8
+  max_documents: 40
+  max_sources_total: 120
+  max_llm_calls: 250
+  max_wall_clock_minutes: 45
+  new_evidence_threshold: 0.12
+  duplicate_rate_converged: 0.68
+  results_per_query: 8
+  max_chunk_chars: 5000
+  chunk_overlap_chars: 350
+  review_gates_enabled: false
+  ask_user_enabled: true
+  ask_user_blocking: false
+  max_user_questions_per_run: 3
+
+safety:
+  allow_skip_quote_verification: false
+  allow_skip_claim_support: false
+  allow_network_in_local_only: false
+  require_counterevidence_for_opportunities: true

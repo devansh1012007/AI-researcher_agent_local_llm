@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ExampleResearcherInheritedAttributes",
+  "description": "Domain schema for Way 3 inherited example researcher pack (extends example_researcher).",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "example_widget_id": {
+      "type": "string"
+    },
+    "jibrish_score": {
+      "type": "number",
+      "minimum": 0.0,
+      "maximum": 100.0
+    },
+    "florb_category": {
+      "type": "string",
+      "enum": ["alpha_florb", "beta_zibble", "gamma_blargle", "delta_snorf", "example_default"]
+    },
+    "turbo_wumpus_mode": {
+      "type": "string",
+      "enum": ["standard_wumpus", "hyper_snorf", "ultra_jibrish"]
+    }
+  }
+}

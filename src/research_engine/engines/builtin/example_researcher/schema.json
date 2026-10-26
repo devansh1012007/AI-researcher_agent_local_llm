@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ExampleResearcherEvidenceAttributes",
+  "description": "Domain schema for example_researcher evidence items with example and jibrish attributes.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "example_widget_id": {
+      "type": "string",
+      "description": "Identifier of the example widget or florb unit (e.g., WIDGET-EX-01, FLORB-9000)."
+    },
+    "jibrish_score": {
+      "type": "number",
+      "minimum": 0.0,
+      "maximum": 100.0,
+      "description": "Synthetic jibrish intensity score between 0 and 100."
+    },
+    "florb_category": {
+      "type": "string",
+      "enum": ["alpha_florb", "beta_zibble", "gamma_blargle", "delta_snorf", "example_default"],
+      "description": "Classification of the example jibrish phenomenon."
+    },
+    "example_metric_note": {
+      "type": "string",
+      "description": "Additional example commentary or wumpus calibration note."
+    }
+  }
+}
