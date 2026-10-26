@@ -147,3 +147,23 @@ def test_third_party_product_teardown_pack_end_to_end(tmp_path: Path):
         assert "dropped attribute 'friction_level'" in ev.validation_notes
     finally:
         clear_search_dirs()
+
+
+def test_custom_pack_cli_option(request, tmp_path: Path):
+    """Appendix C support: `pytest tests/engines/test_third_party_pack.py --pack <path>`."""
+    import os
+    import sys
+    from research_engine.engines.loader import validate_engine_target
+    pack_opt = ""
+    if hasattr(request, "config"):
+        pack_opt = request.config.getoption("--pack", default="")
+    if not pack_opt and "--pack" in sys.argv:
+        idx = sys.argv.index("--pack")
+        if idx + 1 < len(sys.argv):
+            pack_opt = sys.argv[idx + 1]
+    if not pack_opt:
+        pack_opt = os.environ.get("GAR_TEST_PACK", "")
+    target = Path(pack_opt) if pack_opt else (FIXTURES_DIR / "product_teardown")
+    manifest, warnings = validate_engine_target(target)
+    assert manifest.name
+    assert len(manifest.branch_categories()) >= 1

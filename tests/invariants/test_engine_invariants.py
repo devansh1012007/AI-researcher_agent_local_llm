@@ -156,3 +156,25 @@ def test_inv_035_domain_schema_forbids_external_or_internal_ref():
                 "x": {"$ref": "file:///etc/passwd"}
             },
         })
+
+
+def test_inv_030_project_engine_snapshot_sha256_and_drift_diff(tmp_path: Path):
+    """INV-030: create_project records resolved manifest + sha256 in config_snapshot['engine'] and diff_engines compares project snapshots."""
+    from research_engine.core.config import AppConfig
+    from research_engine.core.orchestrator import Orchestrator
+    from research_engine.engines.loader import diff_engines
+
+    cfg = AppConfig()
+    cfg.storage.data_dir = str(tmp_path / "data")
+    orch = Orchestrator.create_project(cfg, "Snapshot reproducibility test", mode="academic")
+    eng_snap = orch.project.config_snapshot.get("engine")
+    assert isinstance(eng_snap, dict)
+    assert eng_snap["name"] == "academic"
+    assert len(eng_snap["sha256"]) == 64
+    assert eng_snap["manifest"]["name"] == "academic"
+
+    # Comparing the project snapshot against 'academic' shows zero drift; against 'startup' shows drift
+    same_diff = diff_engines(orch.project.id, "academic", data_dir=cfg.storage.data_dir)
+    assert same_diff["differences"] == {}
+    drift_diff = diff_engines(orch.project.id, "startup", data_dir=cfg.storage.data_dir)
+    assert "planning" in drift_diff["differences"]

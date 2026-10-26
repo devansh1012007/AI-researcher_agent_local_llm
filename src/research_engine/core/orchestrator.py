@@ -71,6 +71,8 @@ class Orchestrator:
         from research_engine.engines.loader import get_engine, resolve_effective_config
         pid = project_id_from_question(question)
         ws_root = Path(cfg.storage.data_dir) / pid
+        import hashlib
+        manifest = None
         try:
             manifest = get_engine(mode, workspace_dir=ws_root)
             eff_cfg, provenance = resolve_effective_config(
@@ -83,7 +85,14 @@ class Orchestrator:
         project = ResearchProject(id=pid, question_raw=question.strip(), mode=mode)
         project.ensure_id()
         orch = cls(eff_cfg, project)
+        eng_dump = json.loads(manifest.model_dump_json()) if manifest is not None else {"name": mode}
+        eng_sha = hashlib.sha256(json.dumps(eng_dump, sort_keys=True).encode("utf-8")).hexdigest()
         orch.project.config_snapshot = {
+            "engine": {
+                "name": manifest.name if manifest is not None else mode,
+                "sha256": eng_sha,
+                "manifest": eng_dump,
+            },
             "research": json.loads(eff_cfg.research.model_dump_json()),
             "resources": json.loads(eff_cfg.resources.model_dump_json()),
             "prompt_versions": record_versions(engine=mode, workspace_dir=ws_root),

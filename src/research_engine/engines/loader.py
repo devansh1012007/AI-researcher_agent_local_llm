@@ -797,16 +797,31 @@ def explain_engine(
     return out
 
 
+def _resolve_manifest_dict_or_project_snapshot(
+    target: str,
+    workspace_dir: str | Path | None = None,
+    data_dir: str | Path | None = None,
+) -> dict[str, Any]:
+    if data_dir:
+        proj_json = Path(data_dir) / target / "project.json"
+        if proj_json.is_file():
+            pdata = json.loads(proj_json.read_text(encoding="utf-8"))
+            snap_eng = (pdata.get("config_snapshot") or {}).get("engine") or {}
+            if isinstance(snap_eng.get("manifest"), dict):
+                return snap_eng["manifest"]
+    m = get_engine(target, workspace_dir=workspace_dir)
+    return json.loads(m.model_dump_json())
+
+
 def diff_engines(
     name_a: str,
     name_b: str,
     workspace_dir: str | Path | None = None,
+    data_dir: str | Path | None = None,
 ) -> dict[str, Any]:
-    """Return a structured comparison between two engine packs."""
-    ma = get_engine(name_a, workspace_dir=workspace_dir)
-    mb = get_engine(name_b, workspace_dir=workspace_dir)
-    da = json.loads(ma.model_dump_json())
-    db = json.loads(mb.model_dump_json())
+    """Return a structured comparison between two engine packs or a project snapshot and an engine pack."""
+    da = _resolve_manifest_dict_or_project_snapshot(name_a, workspace_dir=workspace_dir, data_dir=data_dir)
+    db = _resolve_manifest_dict_or_project_snapshot(name_b, workspace_dir=workspace_dir, data_dir=data_dir)
     diffs: dict[str, dict[str, Any]] = {}
     for key in sorted(set(da.keys()) | set(db.keys())):
         if da.get(key) != db.get(key):

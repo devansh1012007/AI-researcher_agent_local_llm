@@ -1202,9 +1202,12 @@ def cmd_engine_validate(args):
         for e in exc.errors:
             console.print(f"  - {e}")
         return 1
-    console.print(f"[green]VALID[/green] engine '{m.name}' (v{m.version}, {len(m.branch_categories())} categories)")
     for w in warnings:
         console.print(f"  [yellow]warning:[/yellow] {w}")
+    if getattr(args, "strict", False) and warnings:
+        console.print(f"[red]INVALID under --strict ({len(warnings)} warning(s))[/red]")
+        return 1
+    console.print(f"[green]VALID[/green] engine '{m.name}' (v{m.version}, {len(m.branch_categories())} categories)")
     return 0
 
 
@@ -1220,14 +1223,16 @@ def cmd_engine_explain(args):
 
 def cmd_engine_diff(args):
     from research_engine.engines.loader import diff_engines
-    console.print(json.dumps(diff_engines(args.engine_a, args.engine_b), indent=2, default=str))
+    cfg = _cfg(args)
+    console.print(json.dumps(diff_engines(args.engine_a, args.engine_b, data_dir=cfg.storage.data_dir), indent=2, default=str))
     return 0
 
 
 def cmd_engine_new(args):
     from research_engine.engines.loader import scaffold_engine
     target = Path(args.dir) if getattr(args, "dir", "") else None
-    out_dir = scaffold_engine(args.name, target_root=target, extends=args.extends)
+    parent = getattr(args, "from_engine", None) or getattr(args, "extends", None) or "generic"
+    out_dir = scaffold_engine(args.name, target_root=target, extends=parent)
     console.print(f"[green]Scaffolded engine pack:[/green] {out_dir}")
     return 0
 
@@ -1241,8 +1246,9 @@ def cmd_questions(args):
 
 def cmd_answer(args):
     ctx = _ctx4(args)
+    skip_or_default = bool(getattr(args, "skip", False) or getattr(args, "accept_default", False))
     q = ProjectService(ctx).answer_question(
-        args.project_id, args.question_id, answer=args.answer or "", skip=bool(args.skip)
+        args.project_id, args.question_id, answer=args.answer or "", skip=skip_or_default
     )
     console.print(json.dumps(q, indent=2, default=str))
     return 0
@@ -1255,10 +1261,14 @@ def cmd_trail(args):
     pid = _project_id_or_fail(cfg, args.project_id)
     orch = Orchestrator.load(cfg, pid)
     svc = TrailService.from_repos(orch.repos, orch.ws, orch.project)
-    if getattr(args, "export_fmt", "") == "prov":
+    fmt = getattr(args, "fmt", "") or getattr(args, "export_fmt", "")
+    if fmt == "prov":
         prov = svc.export_prov_json(pid)
         out_path = orch.ws.export_prov_json(prov)
         console.print(json.dumps({"prov_json_path": str(out_path), "entities": len(prov.get("entity", {}))}, indent=2))
+        return 0
+    if fmt == "md":
+        console.print(svc.render_markdown(pid))
         return 0
     if args.claim:
         console.print(json.dumps(svc.trail_for_claim(args.claim, pid), indent=2, default=str))
@@ -1267,6 +1277,41 @@ def cmd_trail(args):
         console.print(json.dumps(svc.trail_for_source(args.source, pid), indent=2, default=str))
         return 0
     console.print(json.dumps(svc.build_trail(pid), indent=2, default=str))
+    return 0
+
+
+def cmd_memory_promote(args):
+    cfg = _cfg(args)
+    from research_engine.core.orchestrator import Orchestrator
+    from research_engine.memory.relational_kb import RelationalKnowledgeBase
+    pid = _project_id_or_fail(cfg, args.project_id)
+    orch = Orchestrator.load(cfg, pid)
+    rkb = RelationalKnowledgeBase(cfg.storage.data_dir)
+    count = rkb.ingest_from_project(
+        pid, orch.repos, classification=str(cfg.platform.security.data_classification)
+    )
+    console.print(json.dumps({"project_id": pid, "promoted_entities": count}, indent=2))
+    return 0
+
+
+def cmd_memory_rebuild(args):
+    cfg = _cfg(args)
+    from research_engine.core.orchestrator import Orchestrator
+    from research_engine.memory.relational_kb import RelationalKnowledgeBase
+    rkb = RelationalKnowledgeBase(cfg.storage.data_dir)
+    data_root = Path(cfg.storage.data_dir)
+    total = 0
+    if data_root.is_dir():
+        for child in sorted(data_root.iterdir()):
+            if child.is_dir() and (child / "research.sqlite").is_file():
+                try:
+                    orch = Orchestrator.load(cfg, child.name)
+                    total += rkb.ingest_from_project(
+                        child.name, orch.repos, classification=str(cfg.platform.security.data_classification)
+                    )
+                except Exception:
+                    pass
+    console.print(json.dumps({"rebuilt_entities": total}, indent=2))
     return 0
 
 
@@ -1604,6 +1649,7 @@ def main(argv=None):
 
     e_val = esub.add_parser("validate", help="validate an engine pack by name or directory")
     e_val.add_argument("target")
+    e_val.add_argument("--strict", action="store_true", help="treat warnings as errors")
     e_val.set_defaults(fn=cmd_engine_validate)
 
     e_exp = esub.add_parser("explain", help="explain effective config layers, loop, and prompt variables")
@@ -1613,7 +1659,7 @@ def main(argv=None):
     e_exp.add_argument("--set", dest="set_overrides", action="append", default=[])
     e_exp.set_defaults(fn=cmd_engine_explain)
 
-    e_diff = esub.add_parser("diff", help="compare two engine packs")
+    e_diff = esub.add_parser("diff", help="compare two engine packs or a project snapshot against an engine")
     e_diff.add_argument("engine_a")
     e_diff.add_argument("engine_b")
     e_diff.set_defaults(fn=cmd_engine_diff)
@@ -1621,6 +1667,7 @@ def main(argv=None):
     e_new = esub.add_parser("new", help="scaffold a new custom engine pack")
     e_new.add_argument("name")
     e_new.add_argument("--extends", default="generic")
+    e_new.add_argument("--from", dest="from_engine", default="")
     e_new.add_argument("--dir", default="")
     e_new.set_defaults(fn=cmd_engine_new)
 
@@ -1634,6 +1681,7 @@ def main(argv=None):
     ap.add_argument("question_id")
     ap.add_argument("answer", nargs="?", default="")
     ap.add_argument("--skip", action="store_true")
+    ap.add_argument("--accept-default", dest="accept_default", action="store_true")
     ap.set_defaults(fn=cmd_answer)
 
     tp = sub.add_parser("trail", help="inspect unified source trail and negative trail")
@@ -1641,7 +1689,16 @@ def main(argv=None):
     tp.add_argument("--claim", default="")
     tp.add_argument("--source", default="")
     tp.add_argument("--export", dest="export_fmt", default="", choices=["", "prov"])
+    tp.add_argument("--format", dest="fmt", default="", choices=["", "md", "json", "prov"])
     tp.set_defaults(fn=cmd_trail)
+
+    mp = sub.add_parser("memory", help="promote or rebuild cross-project relational memory")
+    msub = mp.add_subparsers(dest="memory_cmd", required=True)
+    m_prom = msub.add_parser("promote", help="promote entities and evidence from a project into relational KB")
+    m_prom.add_argument("project_id")
+    m_prom.set_defaults(fn=cmd_memory_promote)
+    m_reb = msub.add_parser("rebuild", help="rebuild relational KB from all non-sensitive project workspaces")
+    m_reb.set_defaults(fn=cmd_memory_rebuild)
 
     args = parser.parse_args(argv)
     rc = args.fn(args)

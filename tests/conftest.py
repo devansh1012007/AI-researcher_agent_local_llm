@@ -119,3 +119,12 @@ def platform_ctx(tmp_path):
     ctx = ServiceContext(cfg=c)
     yield ctx
     ctx.stop_scheduler()
+
+
+def pytest_addoption(parser):
+    parser.addoption(
+        "--pack",
+        action="store",
+        default="",
+        help="Optional path or name of an engine pack to validate in test_third_party_pack.py",
+    )
