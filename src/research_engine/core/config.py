@@ -142,7 +142,10 @@ def is_loopback_host(host: str) -> bool:
     if h in _LOOPBACK_HOSTNAMES:
         return True
     try:
-        return ipaddress.ip_address(h).is_loopback
+        ip = ipaddress.ip_address(h)
+        if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
+            return False
+        return ip.is_loopback
     except ValueError:
         return False
 
