@@ -330,6 +330,50 @@ def create_app(ctx: ServiceContext | None = None) -> FastAPI:
             note=body.note, reviewer_label=body.reviewer_label,
             actor_kind="unverified_label"))
 
+    @app.get("/engines")
+    def list_engines_route(_: str = Depends(auth)) -> list[dict]:
+        from research_engine.engines.loader import list_engines
+        return [
+            {
+                "name": m.name,
+                "display_name": m.display_name,
+                "version": m.version,
+                "description": m.description,
+                "extends": m.extends,
+                "source_layer": m.source_layer,
+                "categories": m.branch_categories(),
+            }
+            for m in list_engines()
+        ]
+
+    @app.get("/engines/{name}")
+    def get_engine_route(name: str, vars: bool = False, _: str = Depends(auth)) -> dict:
+        from research_engine.engines.loader import explain_engine
+        def _run():
+            try:
+                return explain_engine(name, cfg=get_ctx().cfg, include_vars=vars)
+            except ValueError as exc:
+                raise NotFoundError("engine", name) from exc
+        return _guard(_run)
+
+    @app.get("/projects/{project_id}/questions")
+    def list_project_questions(project_id: str, status: str = "", _: str = Depends(auth)) -> list[dict]:
+        return _guard(lambda: ProjectService(get_ctx()).list_questions(project_id, status=status))
+
+    @app.post("/projects/{project_id}/questions/{question_id}/answer")
+    def answer_project_question(project_id: str, question_id: str, body: dict, _: str = Depends(auth)) -> dict:
+        return _guard(lambda: ProjectService(get_ctx()).answer_question(
+            project_id, question_id,
+            answer=str(body.get("answer") or ""),
+            skip=bool(body.get("skip", False)),
+        ))
+
+    @app.get("/projects/{project_id}/trail")
+    def get_project_trail(project_id: str, claim_id: str = "", source_id: str = "", _: str = Depends(auth)) -> dict:
+        return _guard(lambda: ProjectService(get_ctx()).get_trail(
+            project_id, claim_id=claim_id, source_id=source_id,
+        ))
+
     # ------------------------------------------------ startup specialist (#77)
     def _svc():
         # BUG-08 fix: resolve through get_ctx() so default create_app(None)

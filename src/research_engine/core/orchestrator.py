@@ -6,6 +6,7 @@ LLMs propose; the orchestrator decides and persists.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 import logging
 import time
 from datetime import datetime, timezone
@@ -58,19 +59,37 @@ class Orchestrator:
 
     # ------------------------------------------------------------------ setup
     @classmethod
-    def create_project(cls, cfg: AppConfig, question: str, mode: str | None = None) -> "Orchestrator":
+    def create_project(
+        cls,
+        cfg: AppConfig,
+        question: str,
+        mode: str | None = None,
+        cli_overrides: dict | None = None,
+    ) -> "Orchestrator":
         mode = mode or cfg.research.mode
         from research_engine.core.ids import project_id_from_question
+        from research_engine.engines.loader import get_engine, resolve_effective_config
         pid = project_id_from_question(question)
+        ws_root = Path(cfg.storage.data_dir) / pid
+        try:
+            manifest = get_engine(mode, workspace_dir=ws_root)
+            eff_cfg, provenance = resolve_effective_config(
+                cfg, manifest, project_workspace=ws_root, cli_overrides=cli_overrides
+            )
+            eff_cfg.storage.data_dir = cfg.storage.data_dir
+        except Exception:
+            eff_cfg = cfg
+            provenance = {}
         project = ResearchProject(id=pid, question_raw=question.strip(), mode=mode)
         project.ensure_id()
-        orch = cls(cfg, project)
+        orch = cls(eff_cfg, project)
         orch.project.config_snapshot = {
-            "research": json.loads(cfg.research.model_dump_json()),
-            "resources": json.loads(cfg.resources.model_dump_json()),
-            "prompt_versions": record_versions(),
-            "models": {r: getattr(cfg.models, r).model + "@" + getattr(cfg.models, r).provider
+            "research": json.loads(eff_cfg.research.model_dump_json()),
+            "resources": json.loads(eff_cfg.resources.model_dump_json()),
+            "prompt_versions": record_versions(engine=mode, workspace_dir=ws_root),
+            "models": {r: getattr(eff_cfg.models, r).model + "@" + getattr(eff_cfg.models, r).provider
                        for r in ("extractor", "reasoning", "synthesis")},
+            "effective_provenance": provenance,
         }
         orch.repos.projects.save(orch.project)
         orch.ws.project_json.write_text(json.dumps(
@@ -80,14 +99,28 @@ class Orchestrator:
         return orch
 
     @classmethod
-    def load(cls, cfg: AppConfig, project_id: str) -> "Orchestrator":
+    def load(
+        cls,
+        cfg: AppConfig,
+        project_id: str,
+        cli_overrides: dict | None = None,
+    ) -> "Orchestrator":
         ws = Workspace(cfg.storage.data_dir, project_id)
         db = Database(ws.db_path)
         repos = Repositories(db)
         project = repos.projects.get(project_id)  # type: ignore[assignment]
         if project is None:
             raise FileNotFoundError(f"project not found: {project_id}")
-        return cls(cfg, project)
+        try:
+            from research_engine.engines.loader import get_engine, resolve_effective_config
+            manifest = get_engine(project.mode, workspace_dir=ws.root)
+            eff_cfg, _ = resolve_effective_config(
+                cfg, manifest, project_workspace=ws.root, cli_overrides=cli_overrides
+            )
+            eff_cfg.storage.data_dir = cfg.storage.data_dir
+        except Exception:
+            eff_cfg = cfg
+        return cls(eff_cfg, project)
 
     def persist_checkpoint(self) -> None:
         self.project.updated_at = datetime.now(timezone.utc)
@@ -119,42 +152,28 @@ class Orchestrator:
         return True
 
     # ------------------------------------------------------------------ main loop
+    def _build_loop_runner(self, max_iterations: int | None = None):
+        from research_engine.engines.loader import get_engine
+        from research_engine.engines.runner import LoopRunner
+        try:
+            manifest = get_engine(self.project.mode, workspace_dir=self.ws.root)
+        except Exception:
+            manifest = get_engine("academic")
+        eff_max = max_iterations if max_iterations is not None else self.cfg.research.max_iterations
+        return LoopRunner(
+            manifest=manifest,
+            project=self.project,
+            state_machine=self.sm,
+            on_checkpoint=self.persist_checkpoint,
+            metrics_provider=self._compute_metrics,
+            max_iterations=eff_max,
+        )
+
     def run(self, max_iterations: int | None = None) -> ResearchProject:
         p = self.project
         try:
-            if p.state == ProjectState.CREATED:
-                self._phase_clarify()
-            if p.state == ProjectState.CLARIFYING:
-                self._phase_plan()
-            if p.state == ProjectState.PLANNED:
-                self._begin_iteration()
-            guard = 0
-            while p.state not in (ProjectState.CONVERGED, ProjectState.PAUSED,
-                                  ProjectState.FAILED, ProjectState.CANCELLED,
-                                  ProjectState.COMPLETED):
-                guard += 1
-                if guard > 200:
-                    p.stop_reason = StopReason.FAILED
-                    log.error("run-loop guard tripped; forcing stop")
-                    break
-                if self._stop_requested:
-                    p.stop_reason = StopReason.USER_STOPPED
-                    self.sm.transition(p, ProjectState.CONVERGED, "user requested stop")
-                    break
-                if self._check_pause():
-                    return p
-                if p.state == ProjectState.SEARCHING:
-                    self._phase_search_fetch_extract()
-                elif p.state == ProjectState.ANALYZING_GAPS:
-                    if not self._phase_analyze():
-                        break
-                else:  # FETCHING/EXTRACTING etc. are internal; anything else is terminal-ish
-                    break
-            if p.state == ProjectState.CONVERGED:
-                if not self._review_gate(ReviewGate.BEFORE_FINAL_SYNTHESIS):
-                    self.persist_checkpoint()
-                    return p
-                self._phase_synthesize()
+            runner = self._build_loop_runner(max_iterations=max_iterations)
+            runner.run_orchestrated(self, max_iterations=max_iterations)
         except Exception as exc:
             log.exception("orchestrator failure")
             p.stop_reason = StopReason.FAILED
@@ -175,20 +194,39 @@ class Orchestrator:
         p = self.project
         self._pause_requested = False
         gate = p.review_gate_pending
-        if gate == ReviewGate.AFTER_PROBLEM_DEFINITION.value and p.state == ProjectState.PAUSED:
-            self.sm.transition(p, ProjectState.PLANNED, "resumed after problem review")
-        elif p.state == ProjectState.PAUSED:
-            target = (ProjectState.SYNTHESIZING if gate == ReviewGate.BEFORE_FINAL_SYNTHESIS.value
-                      and p.state in (ProjectState.CONVERGED,) else ProjectState.SEARCHING)
-            if p.current_iteration == 0 or gate in (ReviewGate.AFTER_INITIAL_RESEARCH_PLAN.value,
-                                                    ReviewGate.AFTER_PROBLEM_DEFINITION.value):
-                target = ProjectState.SEARCHING
-            self.sm.transition(p, target, f"resumed after gate {gate}")
+        if gate and gate not in p.approved_gates:
+            p.approved_gates.append(gate)
+        if p.state == ProjectState.PAUSED:
+            if gate in (ReviewGate.AFTER_PROBLEM_DEFINITION.value, "WAITING_FOR_USER"):
+                self.sm.transition(p, ProjectState.CLARIFYING, f"resumed after {gate}")
+            elif gate == ReviewGate.AFTER_INITIAL_RESEARCH_PLAN.value:
+                self.sm.transition(p, ProjectState.PLANNED, "resumed after initial research plan review")
+            elif gate == ReviewGate.AFTER_FIRST_RESEARCH_CYCLE.value:
+                self.sm.transition(p, ProjectState.GENERATING_FOLLOWUPS, "resumed after first research cycle review")
+                self._generate_followups(p.current_iteration)
+                p.current_iteration += 1
+                self.events.record(
+                    p.id, "iteration_begin", "orchestrator",
+                    metadata={"iteration": p.current_iteration},
+                    human_line=f"\n[{_ts()}] ITERATION {p.current_iteration}\n" + "-" * 40,
+                )
+                self.sm.transition(p, ProjectState.SEARCHING, f"iteration {p.current_iteration} begins")
+            elif gate == ReviewGate.BEFORE_FINAL_SYNTHESIS.value:
+                self.sm.transition(p, ProjectState.CONVERGED, "resumed before final synthesis")
+            else:
+                if p.current_iteration == 0:
+                    if not self.repos.problems.all(p.id):
+                        self.sm.transition(p, ProjectState.CLARIFYING, "resumed before clarification")
+                    elif not self.repos.plans.all(p.id):
+                        self.sm.transition(p, ProjectState.CLARIFYING, "resumed before planning")
+                    else:
+                        self.sm.transition(p, ProjectState.PLANNED, "resumed before first iteration")
+                elif p.stop_reason is not None:
+                    self.sm.transition(p, ProjectState.CONVERGED, "resumed converged project")
+                else:
+                    self.sm.transition(p, ProjectState.SEARCHING, f"resumed after gate {gate}")
         p.review_gate_pending = None
         self.repos.projects.save(p)
-        if p.state != ProjectState.PLANNED and p.current_iteration == 0 and \
-           p.state not in (ProjectState.COMPLETED, ProjectState.SYNTHESIZING):
-            self._begin_iteration()
         return self.run()
 
     # ------------------------------------------------------------------ phases
@@ -207,6 +245,23 @@ class Orchestrator:
                            human_line=f"\n[{_ts()}] PROBLEM DEFINITION\nObjective: {problem.objective}\n"
                                       f"Subquestions: {len(problem.subquestions)}\n"
                                       + "\n".join(f"  - {a.text}" for a in problem.assumptions))
+        try:
+            from research_engine.engines.loader import get_engine
+            from research_engine.pipeline.questions import generate_questions_for_project
+            manifest = get_engine(p.mode, workspace_dir=self.ws.root)
+            ask_step = next((s for s in manifest.loop.setup if s.step == "ask_user"), None)
+            if ask_step is not None or manifest.tunables.ask_user_enabled or manifest.clarifier.required_inputs:
+                blocking = (ask_step.blocking if ask_step is not None else False) or manifest.tunables.ask_user_blocking
+                max_q = ask_step.max_questions if ask_step is not None else manifest.tunables.max_user_questions_per_run
+                generate_questions_for_project(
+                    p, problem, manifest, self.repos,
+                    max_questions=max_q, blocking=blocking, state_machine=self.sm,
+                )
+                if p.state == ProjectState.PAUSED:
+                    self.persist_checkpoint()
+                    return
+        except Exception as exc:
+            log.warning("ask_user generation skipped: %s", exc)
         if not self._review_gate(ReviewGate.AFTER_PROBLEM_DEFINITION):
             return
         # stays in CLARIFYING until the plan is generated (_phase_plan)
@@ -450,7 +505,6 @@ class Orchestrator:
         return True
 
     @staticmethod
-    @staticmethod
     def _research_gain(prev, cur) -> int:
         """Research gain per iteration (spec #88, P3-2): supported claims + resolved gaps
         + deduplicated accepted evidence delta; duplicate quote re-ingestions add 0 gain."""
@@ -537,7 +591,12 @@ class Orchestrator:
                 self._rrepos = ReasoningRepos(self.db)
             pipe = ReasoningPipeline(self.repos, self._rrepos,
                                      self.router.reasoning, self.registry)
-            if p.mode == "startup":
+            try:
+                from research_engine.engines.loader import get_engine
+                _specialist = get_engine(p.mode).analysis.specialist_pipeline
+            except Exception:
+                _specialist = "startup" if p.mode == "startup" else None
+            if _specialist == "startup":
                 # P0-12: single canonical pipeline. No legacy fallback —
                 # a specialist failure is surfaced honestly (warning + event)
                 # instead of silently double-writing via the retired engine.
@@ -589,6 +648,11 @@ class Orchestrator:
             rep.budget_limited = bool(p.stop_reason and p.stop_reason != StopReason.CONVERGED)
             rep.ensure_id()
             self.repos.reports.save(rep)
+        try:
+            from research_engine.memory.relational_kb import RelationalKnowledgeBase
+            RelationalKnowledgeBase(self.cfg.storage.data_dir).ingest_from_project(p.id, self.repos)
+        except Exception as exc:
+            log.warning("relational_kb ingest skipped (isolated): %s", exc)
         self.sm.transition(p, ProjectState.COMPLETED, f"reports: {', '.join(generated)}")
         self.events.record(p.id, "reports_generated", "reports",
                            metadata={"reports": generated},
@@ -666,8 +730,10 @@ class Orchestrator:
         if not self.cfg.research.review_gates_enabled:
             return True
         p = self.project
+        if gate.value in p.approved_gates:
+            return True
         p.review_gate_pending = gate.value
-        p.state = ProjectState.PAUSED
+        self.sm.transition(p, ProjectState.PAUSED, f"review gate {gate.value}")
         self.persist_checkpoint()
         self.events.record(p.id, "review_gate", "orchestrator",
                            metadata={"gate": gate.value},

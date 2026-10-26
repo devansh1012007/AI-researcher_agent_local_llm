@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ProductTeardownAttributes",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "ux_step": { "type": "string" },
+    "friction_level": {
+      "type": "string",
+      "enum": ["low", "medium", "high"]
+    },
+    "pricing_tier": { "type": "string" },
+    "competitor_compared": { "type": "string" }
+  }
+}

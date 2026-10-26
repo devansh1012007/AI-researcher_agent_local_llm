@@ -12,12 +12,11 @@ from difflib import SequenceMatcher
 
 from pydantic import BaseModel, Field
 
-from research_engine.core.ids import next_id
+from research_engine.engines.loader import get_engine
 from research_engine.models.enums import (
     ACADEMIC_CATEGORIES, STARTUP_CATEGORIES, BranchCategory,
 )
 from research_engine.models.research import ResearchBranch, ResearchPlan, SearchQuery
-from research_engine.modes.base import get_mode
 from research_engine.prompts.registry import get_prompt
 from research_engine.providers.llm.base import LLMProvider
 from research_engine.storage.repositories import Repositories
@@ -51,23 +50,31 @@ class PlannerWorker:
         self.mode = mode
 
     def run(self, project_id: str, problem) -> ResearchPlan:
-        spec = get_prompt("research_planner")
-        allowed = ACADEMIC_CATEGORIES if self.mode == "academic" else STARTUP_CATEGORIES
+        try:
+            manifest = get_engine(self.mode)
+            allowed_cats = manifest.branch_categories()
+            mode_hint = MODE_HINTS.get(self.mode, manifest.clarifier.hint or self.mode)
+            spec = get_prompt("research_planner", engine=manifest.name)
+        except Exception:
+            manifest = get_engine("academic")
+            allowed_cats = [c.value for c in ACADEMIC_CATEGORIES]
+            mode_hint = MODE_HINTS.get(self.mode, self.mode)
+            spec = get_prompt("research_planner")
+
         user = spec.render(
             objective=problem.objective,
             mode=self.mode,
-            mode_hint=MODE_HINTS.get(self.mode, self.mode),
-            categories_hint=", ".join(c.value for c in allowed),
+            mode_hint=mode_hint,
+            categories_hint=", ".join(allowed_cats),
         )
         out, errors = self.provider.structured(spec.system, user, PlanOutput)
         plan = ResearchPlan(project_id=project_id, objective=problem.objective)
-        valid_cats = {c.value for c in allowed}
+        valid_cats = set(allowed_cats)
         any_valid = False
         for b in (out.branches if out else []):
             cat = b.category.upper() if b.category else ""
             if cat not in valid_cats:
-                cat = BranchCategory.GENERIC.value if BranchCategory.GENERIC.value in valid_cats \
-                    else allowed[0].value
+                cat = BranchCategory.GENERIC.value if BranchCategory.GENERIC.value in valid_cats else allowed_cats[0]
             else:
                 any_valid = True
             branch = ResearchBranch(
@@ -81,32 +88,26 @@ class PlannerWorker:
             branch.ensure_id()
             plan.branches.append(branch)
         if not any_valid:
-            # every proposed category was invalid for this mode -> use mode skeleton
+            # every proposed category was invalid for this mode -> use engine skeleton
             plan.branches = []
-        if not plan.branches:
-            # deterministic fallback: mode-appropriate branch skeleton around the question
+        if not plan.branches and manifest.planning.fallback_to_branches:
+            # deterministic fallback driven by EngineManifest.planning.branches
             q = problem.research_question or problem.objective
-            if self.mode == "startup":
-                skeleton = [
-                    (BranchCategory.MARKET, f"What is the market landscape relevant to: {q}?"),
-                    (BranchCategory.CUSTOMERS, f"Who are the customers and what pain do they express regarding: {q}?"),
-                    (BranchCategory.COMPETITORS, "Which companies/products compete here and how are they priced?"),
-                    (BranchCategory.RISKS, "What risks, regulations, or barriers apply?"),
-                ]
-            else:
-                skeleton = [
-                    (BranchCategory.CURRENT_STATE, f"What is the current state of: {q}?"),
-                    (BranchCategory.METHODS, f"Which methods/approaches address: {q}?"),
-                    (BranchCategory.BENCHMARKS, "What benchmarks/datasets allow comparison of these methods?"),
-                    (BranchCategory.LIMITATIONS, "What limitations and failure cases are documented?"),
-                    (BranchCategory.OPEN_PROBLEMS, "Which open problems remain unsolved?"),
-                ]
-            for cat, question in skeleton:
-                br = ResearchBranch(project_id=project_id, category=cat, question=question,
-                                    importance=0.7,
-                                    required_evidence="any credible supporting evidence",
-                                    source_preferences=list(get_mode(self.mode).source_preferences[:2])
-                                    if self.mode in ("academic", "startup") else ["web"])
+            default_prefs = (
+                list(manifest.planning.source_preferences[:2])
+                if manifest.planning.source_preferences
+                else ["web"]
+            )
+            for b_spec in manifest.fallback_branches():
+                question_text = b_spec.default_question.replace("{question}", q)
+                br = ResearchBranch(
+                    project_id=project_id,
+                    category=b_spec.category,
+                    question=question_text,
+                    importance=b_spec.importance,
+                    required_evidence=b_spec.required_evidence,
+                    source_preferences=list(default_prefs),
+                )
                 br.ensure_id()
                 plan.branches.append(br)
         for br in plan.branches:
@@ -150,7 +151,6 @@ class QueryPlannerWorker:
             per_branch: int = 3, existing_queries: list[SearchQuery] | None = None) -> list[SearchQuery]:
         existing = existing_queries or self.repos.queries.all(project_id)
         created: list[SearchQuery] = []
-        # rank open branches by importance
         open_branches = sorted(plan.branches, key=lambda b: -b.importance)
         for branch in open_branches:
             context = self._branch_context(project_id, branch)
@@ -161,7 +161,6 @@ class QueryPlannerWorker:
             out, errors = self.provider.structured(spec.system, user, QueriesOutput)
             candidates = out.queries if out else []
             if not candidates:
-                # deterministic fallback queries from branch question keywords
                 kws = " ".join(branch.question.split()[:8])
                 candidates = [_QueryOut(text=kws, kind="primary", reason="fallback keyword query"),
                               _QueryOut(text=f"{kws} limitations criticism", kind="contradiction",
@@ -171,7 +170,7 @@ class QueryPlannerWorker:
                 if not text or len(text) < 8:
                     continue
                 if any(queries_similar(text, e.text) for e in existing + created):
-                    continue  # semantic dedup — never run near-identical searches
+                    continue
                 q = SearchQuery(
                     project_id=project_id, text=text, branch=branch.id,
                     reason=cand.reason or f"branch {branch.category}",
@@ -193,22 +192,17 @@ class QueryPlannerWorker:
 
 
 def score_information_gain(q: SearchQuery, branch: ResearchBranch, n_existing_queries: int) -> float:
-    """Deterministic heuristic:
-
-    gain = importance * expected_relevance * expected_source_quality * uncertainty * novelty
-    """
     importance = branch.importance
     expected_relevance = {"primary": 1.0, "technical": 0.95, "contradiction": 0.85,
                           "date_filtered": 0.8, "source_specific": 0.75,
                           "synonym": 0.7}.get(q.kind, 0.9)
-    expected_source_quality = 1.0  # router decides sources; neutral here
-    uncertainty = 1.0              # open branch => maximal uncertainty
+    expected_source_quality = 1.0
+    uncertainty = 1.0
     novelty = max(0.3, 1.0 - 0.02 * n_existing_queries)
     return round(importance * expected_relevance * expected_source_quality * uncertainty * novelty, 4)
 
 
 def select_queries(all_queries: list[SearchQuery], budget: int) -> list[SearchQuery]:
-    """Pick top unexecuted queries by expected information gain."""
     pending = [q for q in all_queries if not q.executed]
     pending.sort(key=lambda q: -q.expected_information_gain)
     return pending[:budget]

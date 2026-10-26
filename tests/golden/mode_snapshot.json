@@ -1,0 +1,289 @@
+{
+  "academic": {
+    "fallback_plan": [
+      {
+        "category": "CURRENT_STATE",
+        "importance": 0.7,
+        "question": "What is the current state of: Will AI tutoring replace coding bootcamps??",
+        "required_evidence": "any credible supporting evidence",
+        "source_preferences": [
+          "openalex",
+          "arxiv"
+        ]
+      },
+      {
+        "category": "METHODS",
+        "importance": 0.7,
+        "question": "Which methods/approaches address: Will AI tutoring replace coding bootcamps??",
+        "required_evidence": "any credible supporting evidence",
+        "source_preferences": [
+          "openalex",
+          "arxiv"
+        ]
+      },
+      {
+        "category": "BENCHMARKS",
+        "importance": 0.7,
+        "question": "What benchmarks/datasets allow comparison of these methods?",
+        "required_evidence": "any credible supporting evidence",
+        "source_preferences": [
+          "openalex",
+          "arxiv"
+        ]
+      },
+      {
+        "category": "LIMITATIONS",
+        "importance": 0.7,
+        "question": "What limitations and failure cases are documented?",
+        "required_evidence": "any credible supporting evidence",
+        "source_preferences": [
+          "openalex",
+          "arxiv"
+        ]
+      },
+      {
+        "category": "OPEN_PROBLEMS",
+        "importance": 0.7,
+        "question": "Which open problems remain unsolved?",
+        "required_evidence": "any credible supporting evidence",
+        "source_preferences": [
+          "openalex",
+          "arxiv"
+        ]
+      }
+    ],
+    "mode_dataclass": {
+      "branch_categories": [
+        "FOUNDATIONS",
+        "CURRENT_STATE",
+        "METHODS",
+        "COMPETING_APPROACHES",
+        "EVIDENCE",
+        "BENCHMARKS",
+        "LIMITATIONS",
+        "CONTRADICTIONS",
+        "APPLICATIONS",
+        "OPEN_PROBLEMS"
+      ],
+      "display_name": "Scientific / technical literature research",
+      "evidence_schema_hint": "research question; problem; method; model; dataset; experimental setup; metrics; results; baselines; limitations; future work",
+      "name": "academic",
+      "report_files": [
+        "problem.md",
+        "research_plan.md",
+        "info.md",
+        "sources.md",
+        "gaps.md",
+        "research_log.md",
+        "literature_review.md"
+      ],
+      "source_preferences": [
+        "openalex",
+        "arxiv",
+        "crossref",
+        "semantic_scholar",
+        "web"
+      ]
+    },
+    "routes": {
+      "APPLICATIONS": [
+        "web",
+        "documentation",
+        "openalex"
+      ],
+      "BENCHMARKS": [
+        "openalex",
+        "arxiv",
+        "web",
+        "documentation"
+      ],
+      "COMPETING_APPROACHES": [
+        "openalex",
+        "arxiv",
+        "web"
+      ],
+      "CONTRADICTIONS": [
+        "openalex",
+        "semantic_scholar",
+        "web"
+      ],
+      "CURRENT_STATE": [
+        "web",
+        "documentation",
+        "openalex"
+      ],
+      "EVIDENCE": [
+        "openalex",
+        "crossref",
+        "semantic_scholar"
+      ],
+      "FOUNDATIONS": [
+        "openalex",
+        "arxiv",
+        "crossref",
+        "web"
+      ],
+      "LIMITATIONS": [
+        "openalex",
+        "arxiv",
+        "web"
+      ],
+      "METHODS": [
+        "openalex",
+        "arxiv",
+        "semantic_scholar",
+        "web"
+      ],
+      "OPEN_PROBLEMS": [
+        "arxiv",
+        "openalex",
+        "web"
+      ]
+    },
+    "structural_gaps_seeded": [
+      {
+        "category": "SOURCE_DIVERSITY_GAP",
+        "description": "100% of accepted evidence comes from 'https:' (1 domain(s) total); independent-domain confirmation is missing.",
+        "evidence_needed": "Evidence from additional independent organizations/domains.",
+        "importance": 0.75,
+        "severity": "high"
+      },
+      {
+        "category": "INDEPENDENT_REPLICATION_GAP",
+        "description": "1/1 material claims have no second independent source; replication evidence missing.",
+        "evidence_needed": "Independent confirmation from a different organization.",
+        "importance": 0.7,
+        "severity": "medium"
+      }
+    ]
+  },
+  "startup": {
+    "fallback_plan": [
+      {
+        "category": "MARKET",
+        "importance": 0.7,
+        "question": "What is the market landscape relevant to: Will AI tutoring replace coding bootcamps??",
+        "required_evidence": "any credible supporting evidence",
+        "source_preferences": [
+          "web"
+        ]
+      },
+      {
+        "category": "CUSTOMERS",
+        "importance": 0.7,
+        "question": "Who are the customers and what pain do they express regarding: Will AI tutoring replace coding bootcamps??",
+        "required_evidence": "any credible supporting evidence",
+        "source_preferences": [
+          "web"
+        ]
+      },
+      {
+        "category": "COMPETITORS",
+        "importance": 0.7,
+        "question": "Which companies/products compete here and how are they priced?",
+        "required_evidence": "any credible supporting evidence",
+        "source_preferences": [
+          "web"
+        ]
+      },
+      {
+        "category": "RISKS",
+        "importance": 0.7,
+        "question": "What risks, regulations, or barriers apply?",
+        "required_evidence": "any credible supporting evidence",
+        "source_preferences": [
+          "web"
+        ]
+      }
+    ],
+    "mode_dataclass": {
+      "branch_categories": [
+        "MARKET",
+        "CUSTOMERS",
+        "PAIN",
+        "ALTERNATIVES",
+        "COMPETITORS",
+        "PRICING",
+        "DISTRIBUTION",
+        "REGULATIONS",
+        "TECHNOLOGY",
+        "FUNDING",
+        "TIMING",
+        "RISKS"
+      ],
+      "display_name": "Startup & market opportunity research",
+      "evidence_schema_hint": "customer; segment; job-to-be-done; pain; current solution; competitor; pricing; spending signal; market size; distribution; regulation; technology shift; timing; funding signal; risk",
+      "name": "startup",
+      "report_files": [
+        "problem.md",
+        "research_plan.md",
+        "info.md",
+        "sources.md",
+        "gaps.md",
+        "research_log.md",
+        "startup_research.md"
+      ],
+      "source_preferences": [
+        "web"
+      ]
+    },
+    "routes": {
+      "ALTERNATIVES": [
+        "web"
+      ],
+      "COMPETITORS": [
+        "web"
+      ],
+      "CUSTOMERS": [
+        "web"
+      ],
+      "DISTRIBUTION": [
+        "web"
+      ],
+      "FUNDING": [
+        "web"
+      ],
+      "MARKET": [
+        "web"
+      ],
+      "PAIN": [
+        "web",
+        "forum"
+      ],
+      "PRICING": [
+        "web"
+      ],
+      "REGULATIONS": [
+        "web",
+        "government"
+      ],
+      "RISKS": [
+        "web"
+      ],
+      "TECHNOLOGY": [
+        "web",
+        "openalex",
+        "arxiv"
+      ],
+      "TIMING": [
+        "web"
+      ]
+    },
+    "structural_gaps_seeded": [
+      {
+        "category": "SOURCE_DIVERSITY_GAP",
+        "description": "100% of accepted evidence comes from 'https:' (1 domain(s) total); independent-domain confirmation is missing.",
+        "evidence_needed": "Evidence from additional independent organizations/domains.",
+        "importance": 0.75,
+        "severity": "high"
+      },
+      {
+        "category": "INDEPENDENT_REPLICATION_GAP",
+        "description": "1/1 material claims have no second independent source; replication evidence missing.",
+        "evidence_needed": "Independent confirmation from a different organization.",
+        "importance": 0.7,
+        "severity": "medium"
+      }
+    ]
+  }
+}

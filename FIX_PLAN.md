@@ -1,10 +1,11 @@
 # FIX PLAN — verified defect backlog and remediation phases
 
-**Status:** **W1 through W10 (Phases 0–6) are implemented and verified across
-all local gates (`pytest`, `mutation_check.py` M-1..M-26, `reaudit.py` 14/14,
-`check_dist.py`, `run_eval.py --offline`, `run_goldset.py`).** See
-`IMPLEMENTATION_STATUS.md` for the four-state verification matrix (implementation,
-focused regression, full-gate validation, and review status).
+**Status:** **W1 through W10 (Roadmap Phases 0–6) AND Configurable Research Engines
+(Phases 0–10, `INV-030`..`INV-035`, `M-1`..`M-32`) are implemented and verified across
+all local gates (`pytest` 497 passed, `mutation_check.py` 32/32, `reaudit.py` 14/14,
+`check_dist.py` 26 templates + 20 engine pack files, `run_eval.py --offline` 17/17,
+`run_goldset.py`).** See `IMPLEMENTATION_STATUS.md`, `docs/engines.md`, and
+`docs/source_trail.md` for the full verification matrix and architecture documentation.
 
 | Wave | Item | Result | Verified by |
 |---|---|---|---|

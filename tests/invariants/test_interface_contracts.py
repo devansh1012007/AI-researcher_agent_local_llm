@@ -117,6 +117,18 @@ class TestApiContracts:
                 f"/projects/{pid}/review/decisions",
                 json={"target_kind": "claim", "target_id": "clm_nope", "verdict": "APPROVED"},
             ),
+            ("GET", "/engines"): lambda: client.get("/engines"),
+            ("GET", "/engines/{name}"): lambda: client.get("/engines/academic"),
+            ("GET", "/projects/{project_id}/questions"): lambda: client.get(
+                f"/projects/{pid}/questions"
+            ),
+            ("POST", "/projects/{project_id}/questions/{question_id}/answer"): lambda: client.post(
+                f"/projects/{pid}/questions/q_nope/answer",
+                json={"answer": "enterprise", "skip": False},
+            ),
+            ("GET", "/projects/{project_id}/trail"): lambda: client.get(
+                f"/projects/{pid}/trail"
+            ),
             ("GET", "/jobs"): lambda: client.get("/jobs"),
             ("POST", "/jobs"): lambda: client.post(
                 f"/jobs?type_=deep_research&project_id={pid}"
@@ -231,6 +243,10 @@ class TestMcpContracts:
         spid = self._mk_project(srv, mode="startup", question=STARTUP_Q)
         schema_args = {
             "create_research_project": {"question": QUESTION, "mode": "academic"},
+            "list_engines": {},
+            "get_pending_questions": {"project_id": pid},
+            "answer_question": {"project_id": pid, "question_id": "q_nope", "answer": "enterprise"},
+            "get_source_trail": {"project_id": pid},
             "start_research": {"project_id": pid},
             "get_research_status": {"project_id": pid},
             "pause_research": {"project_id": pid},

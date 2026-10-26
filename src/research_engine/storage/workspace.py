@@ -52,3 +52,9 @@ class Workspace:
         blob = {"task_id": task_id, "role": role, "system": system[:4000],
                 "user": user[:20000], "response": response[:20000]}
         (self.prompts / f"{task_id}_{role}.json").write_text(json.dumps(blob, indent=1))
+
+    def export_prov_json(self, prov_doc: dict) -> Path:
+        import json
+        path = self.exports / "trail.prov.json"
+        path.write_text(json.dumps(prov_doc, indent=2, default=str) + "\n", encoding="utf-8")
+        return path

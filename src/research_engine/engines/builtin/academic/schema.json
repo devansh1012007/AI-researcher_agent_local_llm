@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AcademicEvidenceAttributes",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "method_or_model": { "type": "string" },
+    "dataset_or_benchmark": { "type": "string" },
+    "baseline_compared": { "type": "string" },
+    "sample_or_scale": { "type": "string" },
+    "stated_limitation": { "type": "string" },
+    "study_design": {
+      "type": "string",
+      "enum": ["experimental", "observational", "simulation", "theoretical", "survey_or_meta", "unspecified"]
+    }
+  }
+}

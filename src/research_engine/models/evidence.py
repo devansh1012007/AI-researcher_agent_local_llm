@@ -6,6 +6,8 @@ An inference or assumption must never silently become a fact.
 """
 from __future__ import annotations
 
+from typing import Any, ClassVar
+
 from pydantic import Field
 
 from research_engine.models.base import Entity
@@ -59,6 +61,9 @@ class Evidence(Entity):
     support_verdict: str = ""       # ENTAILS..UNRELATED (pipeline/claim_support)
     support_score: float = -1.0     # -1 = not assessed (legacy rows)
     support_reasons: list[str] = Field(default_factory=list)
+    # Phase 6 & 7: provenance and validated domain attributes
+    extracted_by: str = ""
+    attributes: dict[str, Any] = Field(default_factory=dict)
 
     def ensure_id(self) -> None:
         super().ensure_id(self.PREFIX)

@@ -10,6 +10,7 @@ from research_engine.models.analysis import Contradiction, Gap
 from research_engine.models.document import Document, DocumentChunk
 from research_engine.models.evidence import Claim, Evidence
 from research_engine.models.opportunity import Opportunity
+from research_engine.models.questions import Question
 from research_engine.models.project import ResearchMetrics, ResearchProblem, ResearchProject, ResearchReport
 from research_engine.models.research import ResearchBranch, ResearchPlan, SearchQuery, SearchResult, Source
 from research_engine.models.task import Task
@@ -244,6 +245,17 @@ class OpportunityRepo(Repository):
     model = Opportunity
 
 
+class QuestionRepo(Repository):
+    table = "questions"
+    model = Question
+
+    def _index_cols(self, q: Question):
+        return {"status": q.status, "iteration": q.iteration}
+
+    def open_questions(self, project_id: str) -> list[Question]:
+        return self.all(project_id, "status=?", ("OPEN",))
+
+
 class Repositories:
     """Bundle of all repos bound to one Database."""
 
@@ -266,3 +278,4 @@ class Repositories:
         self.metrics = MetricsRepo(db)
         self.reports = ReportRepo(db)
         self.opportunities = OpportunityRepo(db)
+        self.questions = QuestionRepo(db)

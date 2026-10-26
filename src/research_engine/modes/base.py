@@ -1,11 +1,15 @@
-"""Research mode abstraction.
+"""Research mode compatibility shim over the declarative Engine Pack loader.
 
-A mode customizes: default branch categories, evidence schema hints, query strategy,
-report set. Both academic and startup modes share the same core engine.
+Preserves the legacy ``ResearchMode``, ``ACADEMIC_MODE``, ``STARTUP_MODE``,
+``MODES``, and ``get_mode(name)`` interface while delegating all definitions
+to ``research_engine.engines.loader``.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+
+from research_engine.engines.loader import engine_names, get_engine
+from research_engine.engines.manifest import EngineManifest
 
 
 @dataclass
@@ -21,40 +25,39 @@ class ResearchMode:
         return list(self.report_files)
 
 
-ACADEMIC_MODE = ResearchMode(
-    name="academic",
-    display_name="Scientific / technical literature research",
-    branch_categories=[
-        "FOUNDATIONS", "CURRENT_STATE", "METHODS", "COMPETING_APPROACHES",
-        "EVIDENCE", "BENCHMARKS", "LIMITATIONS", "CONTRADICTIONS",
-        "APPLICATIONS", "OPEN_PROBLEMS",
-    ],
-    evidence_schema_hint=("research question; problem; method; model; dataset; "
-                          "experimental setup; metrics; results; baselines; limitations; future work"),
-    report_files=["problem.md", "research_plan.md", "info.md", "sources.md",
-                  "gaps.md", "research_log.md", "literature_review.md"],
-    source_preferences=["openalex", "arxiv", "crossref", "semantic_scholar", "web"],
-)
+def _manifest_to_mode(manifest: EngineManifest) -> ResearchMode:
+    return ResearchMode(
+        name=manifest.name,
+        display_name=manifest.display_name,
+        branch_categories=manifest.branch_categories(),
+        evidence_schema_hint=manifest.extraction.schema_hint,
+        report_files=manifest.report_files(),
+        source_preferences=list(manifest.planning.source_preferences),
+    )
 
-STARTUP_MODE = ResearchMode(
-    name="startup",
-    display_name="Startup & market opportunity research",
-    branch_categories=[
-        "MARKET", "CUSTOMERS", "PAIN", "ALTERNATIVES", "COMPETITORS", "PRICING",
-        "DISTRIBUTION", "REGULATIONS", "TECHNOLOGY", "FUNDING", "TIMING", "RISKS",
-    ],
-    evidence_schema_hint=("customer; segment; job-to-be-done; pain; current solution; competitor; "
-                          "pricing; spending signal; market size; distribution; regulation; "
-                          "technology shift; timing; funding signal; risk"),
-    report_files=["problem.md", "research_plan.md", "info.md", "sources.md",
-                  "gaps.md", "research_log.md", "startup_research.md"],
-    source_preferences=["web"],
-)
 
-MODES = {m.name: m for m in (ACADEMIC_MODE, STARTUP_MODE)}
+ACADEMIC_MODE = _manifest_to_mode(get_engine("academic"))
+STARTUP_MODE = _manifest_to_mode(get_engine("startup"))
+
+MODES: dict[str, ResearchMode] = {
+    name: _manifest_to_mode(get_engine(name))
+    for name in engine_names()
+}
+
+
+def _refresh_modes() -> None:
+    MODES.clear()
+    for name in engine_names():
+        MODES[name] = _manifest_to_mode(get_engine(name))
 
 
 def get_mode(name: str) -> ResearchMode:
-    if name not in MODES:
-        raise ValueError(f"unknown mode '{name}'; available: {list(MODES)}")
-    return MODES[name]
+    if name in MODES:
+        return MODES[name]
+    try:
+        manifest = get_engine(name)
+        mode = _manifest_to_mode(manifest)
+        MODES[name] = mode
+        return mode
+    except Exception as exc:
+        raise ValueError(f"unknown mode '{name}'; available: {list(MODES)}") from exc

@@ -145,53 +145,89 @@ class ReportGenerator:
             path = fn(project)
             if path:
                 written.append(name)
-        if project.mode == "academic":
-            if self.write_literature_review(project):
+        try:
+            from research_engine.engines.loader import get_engine
+            manifest = get_engine(project.mode)
+        except Exception:
+            manifest = None
+
+        domain_writers = {
+            "literature_review": self.write_literature_review,
+            "startup_research": self.write_startup_research,
+        }
+        if manifest is not None:
+            for d_entry in manifest.reports.domain:
+                fn = domain_writers.get(d_entry.id)
+                if fn and fn(project):
+                    written.append(d_entry.file)
+        else:
+            if project.mode == "academic" and self.write_literature_review(project):
                 written.append("literature_review.md")
-        elif project.mode == "startup":
-            if self.write_startup_research(project):
+            elif project.mode == "startup" and self.write_startup_research(project):
                 written.append("startup_research.md")
+
         # research_log.md is maintained incrementally by EventLog; ensure header exists
         log_path = self.ws.reports / "research_log.md"
         if not log_path.exists():
             log_path.write_text(f"# Research Log — {project.id}\n")
             written.append("research_log.md")
-        # --- Phase 2 intelligence reports ---
+
+        # Write source_trail.md
+        try:
+            if self.write_source_trail(project):
+                written.append("source_trail.md")
+        except Exception as exc:
+            log.warning("report source_trail.md failed (isolated): %s", exc)
+
+        # --- Phase 2 intelligence reports (dispatched from manifest) ---
         from research_engine.reports.intelligence_reports import IntelligenceReports
         ir = IntelligenceReports(self.repos, self.ws)
-        phase2 = [("evidence_map.md", ir.write_evidence_map),
-                  ("contradiction_report.md", ir.write_contradiction_report),
-                  ("research_timeline.md", ir.write_research_timeline)]
-        if project.mode == "academic":
-            phase2 += [("literature_map.md", ir.write_literature_map),
-                       ("methods_comparison.md", ir.write_method_comparison),
-                       ("benchmark_analysis.md", ir.write_benchmark_analysis)]
-        elif project.mode == "startup":
-            phase2 += [("market_map.md", ir.write_market_map),
-                       ("opportunity_map.md", ir.write_opportunity_map),
-                       ("validation_candidates.md", ir.write_validation_candidates)]
+        ir_registry = {
+            "evidence_map": ir.write_evidence_map,
+            "contradiction_report": ir.write_contradiction_report,
+            "research_timeline": ir.write_research_timeline,
+            "literature_map": ir.write_literature_map,
+            "method_comparison": ir.write_method_comparison,
+            "benchmark_analysis": ir.write_benchmark_analysis,
+            "market_map": ir.write_market_map,
+            "opportunity_map": ir.write_opportunity_map,
+            "validation_candidates": ir.write_validation_candidates,
+        }
+        if manifest is not None:
+            phase2 = [(entry.file, ir_registry[entry.id]) for entry in manifest.reports.intelligence if entry.id in ir_registry]
+        else:
+            phase2 = [("evidence_map.md", ir.write_evidence_map),
+                      ("contradiction_report.md", ir.write_contradiction_report),
+                      ("research_timeline.md", ir.write_research_timeline)]
         for name, fn in phase2:
             try:
                 if fn(project.id):
                     written.append(name)
             except Exception as exc:  # report failures never kill completion
                 log.warning("report %s failed (isolated): %s", name, exc)
-        # --- Phase 3 reasoning reports ---
+
+        # --- Phase 3 reasoning reports (dispatched from manifest) ---
         try:
             from research_engine.storage.reasoning_repos import ReasoningRepos
             from research_engine.reports.reasoning_reports import ReasoningReports
             if not hasattr(self, "_rrepos"):
                 self._rrepos = ReasoningRepos(self.repos.db)
             rr3 = ReasoningReports(self.repos, self.ws, self._rrepos)
-            phase3 = [("hypotheses.md", rr3.write_hypotheses),
-                      ("assumptions.md", rr3.write_assumptions),
-                      ("decision_analysis.md", rr3.write_decision_analysis)]
-            if project.mode == "academic":
-                phase3 += [("methodology.md", rr3.write_methodology),
-                           ("experiment_plan.md", rr3.write_experiment_plan),
-                           ("evaluation_plan.md", rr3.write_evaluation_plan)]
+            rr_registry = {
+                "hypotheses": rr3.write_hypotheses,
+                "assumptions": rr3.write_assumptions,
+                "decision_analysis": rr3.write_decision_analysis,
+                "methodology": rr3.write_methodology,
+                "experiment_plan": rr3.write_experiment_plan,
+                "evaluation_plan": rr3.write_evaluation_plan,
+                "validation_plan": rr3.write_validation_plan,
+            }
+            if manifest is not None:
+                phase3 = [(entry.file, rr_registry[entry.id]) for entry in manifest.reports.reasoning if entry.id in rr_registry]
             else:
-                phase3 += [("validation_plan.md", rr3.write_validation_plan)]
+                phase3 = [("hypotheses.md", rr3.write_hypotheses),
+                          ("assumptions.md", rr3.write_assumptions),
+                          ("decision_analysis.md", rr3.write_decision_analysis)]
             for name, fn in phase3:
                 try:
                     if fn(project.id):
@@ -403,6 +439,13 @@ class ReportGenerator:
         lines.append("See `sources.md`.")
         self._append_rejected_marking(lines, project.id, rejected_ids)
         return str(self._write("info.md", "\n".join(lines)))
+
+    def write_source_trail(self, project) -> str:
+        from research_engine.services.trail_service import TrailService
+        svc = TrailService.from_repos(self.repos, self.ws, project)
+        md = svc.render_markdown()
+        self.ws.export_prov_json(svc.export_prov_json())
+        return str(self._write("source_trail.md", md))
 
     def write_sources(self, project) -> str:
         sources = self.repos.sources.all(project.id)

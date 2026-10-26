@@ -1,0 +1,13 @@
+[PRODUCT TEARDOWN EXTRACTOR]
+Source: {{source_title}} ({{location}}, page {{page}})
+Questions:
+{{questions}}
+Schema: {{schema_hint}}
+Domain attributes: {{domain_schema_hint}}
+
+CHUNK:
+"""
+{{chunk_text}}
+"""
+
+Return JSON {"evidence": [{"claim": "...", "quote": "...", "confidence": 0.8, "entities": [], "tags": [], "kind": "FACT", "numbers": [], "attributes": {}}]}

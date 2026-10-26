@@ -174,3 +174,20 @@ def test_missing_templates_dir_reports_an_incomplete_installation():
     finally:
         registry.TEMPLATES_DIR = original
         registry._load.cache_clear()
+
+
+def test_package_data_covers_every_builtin_engine_pack_file():
+    builtin_dir = SRC / "engines" / "builtin"
+    package_data = (
+        _pyproject().get("tool", {}).get("setuptools", {}).get("package-data", {})
+    )
+    covered: set[Path] = set()
+    for package, patterns in package_data.items():
+        pkg_dir = SRC.parent / Path(*package.split("."))
+        for pattern in patterns:
+            for match in glob.glob(pattern, root_dir=str(pkg_dir), recursive=True):
+                covered.add((pkg_dir / match).resolve())
+    actual = {p.resolve() for p in builtin_dir.rglob("*") if p.is_file()}
+    assert actual, f"no builtin engine files found under {builtin_dir}"
+    missing = actual - covered
+    assert not missing, f"builtin engine files not covered by package-data: {sorted(str(p) for p in missing)}"

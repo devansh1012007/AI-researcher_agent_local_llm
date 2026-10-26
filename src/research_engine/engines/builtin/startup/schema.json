@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "StartupEvidenceAttributes",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "customer_segment": { "type": "string" },
+    "job_to_be_done": { "type": "string" },
+    "pain_statement": { "type": "string" },
+    "competitor_or_alternative": { "type": "string" },
+    "pricing_raw": { "type": "string" },
+    "demand_signal_type": {
+      "type": "string",
+      "enum": ["casual_opinion", "survey_intention", "interview_evidence", "prototype_usage", "repeated_behavioral_usage", "payment", "none"]
+    }
+  }
+}

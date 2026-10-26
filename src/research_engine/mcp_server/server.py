@@ -34,6 +34,11 @@ SERVER_INFO = {"name": "gar-research", "version": "4.0",
 
 
 # ------------------------------------------------------------------ tool specs
+def _available_engine_names() -> list[str]:
+    from research_engine.engines.loader import engine_names
+    return engine_names()
+
+
 def build_tools() -> list[dict[str, Any]]:
     """Stable, high-value tools only (spec #28). Schemas are JSON Schema."""
     def t(name, desc, permission, schema):
@@ -43,13 +48,41 @@ def build_tools() -> list[dict[str, Any]]:
 
     return [
         t("create_research_project",
-          "Create a research project from a question (mode: academic|startup)",
+          "Create a research project from a question (mode: academic|startup|generic|custom)",
           Permission.RESEARCH,
           {"type": "object",
            "properties": {"question": {"type": "string"},
                           "mode": {"type": "string",
-                                   "enum": ["academic", "startup"]}},
+                                   "enum": _available_engine_names()}},
            "required": ["question"]}),
+        t("list_engines",
+          "List available declarative research engine packs and their categories",
+          Permission.READ,
+          {"type": "object", "properties": {}}),
+        t("get_pending_questions",
+          "List clarifying questions for a project (optionally filtered by status)",
+          Permission.READ,
+          {"type": "object",
+           "properties": {"project_id": {"type": "string"},
+                          "status": {"type": "string"}},
+           "required": ["project_id"]}),
+        t("answer_question",
+          "Answer or skip a clarifying question for a project",
+          Permission.WRITE,
+          {"type": "object",
+           "properties": {"project_id": {"type": "string"},
+                          "question_id": {"type": "string"},
+                          "answer": {"type": "string"},
+                          "skip": {"type": "boolean"}},
+           "required": ["project_id", "question_id"]}),
+        t("get_source_trail",
+          "Get unified source trail and negative trail for a project, claim, or source",
+          Permission.READ,
+          {"type": "object",
+           "properties": {"project_id": {"type": "string"},
+                          "claim_id": {"type": "string"},
+                          "source_id": {"type": "string"}},
+           "required": ["project_id"]}),
         t("start_research",
           "Queue a long-running deep research job; returns job id immediately",
           Permission.RESEARCH,
@@ -366,6 +399,42 @@ class McpServer:
         return {"content": [{"type": "text",
                              "text": json.dumps(content, default=str)}],
                 "isError": False}
+
+    def _tool_list_engines(self, _a: dict) -> dict:
+        from research_engine.engines.loader import list_engines
+        return {
+            "engines": [
+                {
+                    "name": m.name,
+                    "display_name": m.display_name,
+                    "version": m.version,
+                    "extends": m.extends,
+                    "source_layer": m.source_layer,
+                    "categories": m.branch_categories(),
+                }
+                for m in list_engines()
+            ]
+        }
+
+    def _tool_get_pending_questions(self, a: dict) -> dict:
+        qs = self.projects.list_questions(a["project_id"], status=str(a.get("status") or ""))
+        return {"questions": qs}
+
+    def _tool_answer_question(self, a: dict) -> dict:
+        q = self.projects.answer_question(
+            a["project_id"],
+            a["question_id"],
+            answer=str(a.get("answer") or ""),
+            skip=bool(a.get("skip", False)),
+        )
+        return {"question": q}
+
+    def _tool_get_source_trail(self, a: dict) -> dict:
+        return self.projects.get_trail(
+            a["project_id"],
+            claim_id=str(a.get("claim_id") or ""),
+            source_id=str(a.get("source_id") or ""),
+        )
 
     def _tool_create_research_project(self, a: dict) -> dict:
         p = self.projects.create(ProjectCreate(question=a["question"],

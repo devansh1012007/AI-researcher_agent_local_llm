@@ -1,0 +1,210 @@
+schema_version: 1
+name: startup
+display_name: "Startup & market opportunity research"
+version: "1.0.0"
+description: "Market landscape, customer segments, pain points, alternatives, competitors, pricing, distribution, regulations, timing, funding, and risks."
+extends: null
+
+clarifier:
+  hint: "startup & market opportunity research"
+  prompt_template: "problem_clarifier"
+  required_inputs: []
+  ask_user_when:
+    - "target customer segment (SMB vs mid-market vs enterprise vs consumer) is unspecified"
+    - "target geography or regulatory regime is unspecified"
+    - "business model or price-point constraint is unspecified"
+
+planning:
+  fallback_to_branches: true
+  source_preferences:
+    - web
+  branches:
+    - category: MARKET
+      default_question: "What is the market landscape relevant to: {question}?"
+      importance: 0.7
+      required_evidence: "any credible supporting evidence"
+      route: [web]
+      fallback: true
+    - category: CUSTOMERS
+      default_question: "Who are the customers and what pain do they express regarding: {question}?"
+      importance: 0.7
+      required_evidence: "any credible supporting evidence"
+      route: [web]
+      fallback: true
+    - category: PAIN
+      default_question: "What specific workflow pains and workarounds do users report for: {question}?"
+      importance: 0.7
+      required_evidence: "any credible supporting evidence"
+      route: [web, forum]
+      fallback: false
+    - category: ALTERNATIVES
+      default_question: "What status-quo workarounds or non-consumption alternatives exist for: {question}?"
+      importance: 0.7
+      required_evidence: "any credible supporting evidence"
+      route: [web]
+      fallback: false
+    - category: COMPETITORS
+      default_question: "Which companies/products compete here and how are they priced?"
+      importance: 0.7
+      required_evidence: "any credible supporting evidence"
+      route: [web]
+      fallback: true
+    - category: PRICING
+      default_question: "What pricing models, tiers, and willingness-to-pay signals exist for: {question}?"
+      importance: 0.7
+      required_evidence: "any credible supporting evidence"
+      route: [web]
+      fallback: false
+    - category: DISTRIBUTION
+      default_question: "Which acquisition and distribution channels reach buyers for: {question}?"
+      importance: 0.7
+      required_evidence: "any credible supporting evidence"
+      route: [web]
+      fallback: false
+    - category: REGULATIONS
+      default_question: "What regulatory, compliance, or licensing requirements govern: {question}?"
+      importance: 0.7
+      required_evidence: "any credible supporting evidence"
+      route: [web, government]
+      fallback: false
+    - category: TECHNOLOGY
+      default_question: "What technology shifts enable new solutions for: {question}?"
+      importance: 0.7
+      required_evidence: "any credible supporting evidence"
+      route: [web, openalex, arxiv]
+      fallback: false
+    - category: FUNDING
+      default_question: "What funding, M&A, or investment activity is occurring in: {question}?"
+      importance: 0.7
+      required_evidence: "any credible supporting evidence"
+      route: [web]
+      fallback: false
+    - category: TIMING
+      default_question: "Why now: what macro, regulatory, or technological catalysts affect: {question}?"
+      importance: 0.7
+      required_evidence: "any credible supporting evidence"
+      route: [web]
+      fallback: false
+    - category: RISKS
+      default_question: "What risks, regulations, or barriers apply?"
+      importance: 0.7
+      required_evidence: "any credible supporting evidence"
+      route: [web]
+      fallback: true
+
+extraction:
+  schema_hint: "customer; segment; job-to-be-done; pain; current solution; competitor; pricing; spending signal; market size; distribution; regulation; technology shift; timing; funding signal; risk"
+  prompt_template: "evidence_extractor"
+  domain_schema: "schema.json"
+  require_verbatim_quote: true
+  require_claim_support: true
+
+analysis:
+  structural_checks:
+    - source_diversity
+    - negative_evidence
+    - independent_replication
+    - causality
+    - customer_segments
+    - competitors
+    - validation_evidence
+    - geography
+  specialist_pipeline: startup
+
+loop:
+  setup:
+    - step: clarify
+      pause_after: false
+      gate: AFTER_PROBLEM_DEFINITION
+    - step: ask_user
+      blocking: false
+      max_questions: 3
+    - step: plan
+      pause_after: false
+      gate: AFTER_INITIAL_RESEARCH_PLAN
+    - step: generate_queries
+  per_iteration:
+    - step: search
+      budget: max_queries_per_iteration
+    - step: fetch_and_parse
+      max_parallel: max_parallel_fetches
+    - step: extract_evidence
+    - step: verify_and_dedup
+    - step: detect_contradictions
+    - step: detect_gaps
+    - step: evaluate_convergence
+      pause_after: false
+    - step: generate_followups
+  stop_when:
+    - metric: new_evidence_rate
+      op: "<="
+      value: 0.10
+      after_iteration: 2
+    - metric: duplicate_rate
+      op: ">="
+      value: 0.70
+      after_iteration: 1
+    - metric: gaps_open
+      op: "=="
+      value: 0
+      after_iteration: 1
+  synthesis:
+    - step: specialist_pipeline
+    - step: write_reports
+
+reports:
+  core:
+    - problem.md
+    - research_plan.md
+    - info.md
+    - sources.md
+    - gaps.md
+    - research_log.md
+  domain:
+    - id: startup_research
+      file: startup_research.md
+  intelligence:
+    - id: evidence_map
+      file: evidence_map.md
+    - id: contradiction_report
+      file: contradiction_report.md
+    - id: research_timeline
+      file: research_timeline.md
+    - id: market_map
+      file: market_map.md
+    - id: opportunity_map
+      file: opportunity_map.md
+    - id: validation_candidates
+      file: validation_candidates.md
+  reasoning:
+    - id: hypotheses
+      file: hypotheses.md
+    - id: assumptions
+      file: assumptions.md
+    - id: decision_analysis
+      file: decision_analysis.md
+    - id: validation_plan
+      file: validation_plan.md
+
+tunables:
+  max_iterations: 3
+  max_queries_per_iteration: 8
+  max_documents: 50
+  max_sources_total: 150
+  max_llm_calls: 300
+  max_wall_clock_minutes: 60
+  new_evidence_threshold: 0.10
+  duplicate_rate_converged: 0.70
+  results_per_query: 10
+  max_chunk_chars: 6000
+  chunk_overlap_chars: 400
+  review_gates_enabled: false
+  ask_user_enabled: false
+  ask_user_blocking: false
+  max_user_questions_per_run: 3
+
+safety:
+  allow_skip_quote_verification: false
+  allow_skip_claim_support: false
+  allow_network_in_local_only: false
+  require_counterevidence_for_opportunities: true

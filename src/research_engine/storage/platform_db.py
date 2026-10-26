@@ -236,6 +236,11 @@ class PlatformDB:
                     row = conn.execute(
                         """SELECT data FROM tasks
                            WHERE resource_profile=?
+                             AND NOT EXISTS (
+                                 SELECT 1 FROM jobs j
+                                 WHERE j.id = tasks.job_id
+                                   AND j.status IN ('PAUSING','PAUSED','BLOCKED','WAITING_FOR_USER')
+                             )
                              AND ((status IN ('QUEUED','RETRYING'))
                                OR (status IN ('CLAIMED','RUNNING')
                                    AND lease_expires_at IS NOT NULL

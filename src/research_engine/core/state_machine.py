@@ -44,6 +44,8 @@ ALLOWED: dict[ProjectState, set[ProjectState]] = {
         ProjectState.CLARIFYING, ProjectState.PLANNED, ProjectState.SEARCHING,
         ProjectState.FETCHING, ProjectState.EXTRACTING, ProjectState.VERIFYING,
         ProjectState.ANALYZING_GAPS, ProjectState.GENERATING_FOLLOWUPS, ProjectState.ITERATING,
+        ProjectState.CONVERGED, ProjectState.SYNTHESIZING,
+        ProjectState.FAILED, ProjectState.CANCELLED,
     },
     ProjectState.FAILED: {ProjectState.SEARCHING, ProjectState.SYNTHESIZING},
     ProjectState.CANCELLED: set(),

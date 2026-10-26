@@ -205,6 +205,42 @@ MUTATIONS = [
      '''                if getattr(e, "opportunity_id", "") == opportunity_id''',
      '''                if True''',
      "tests/unit/test_phase5_research_quality.py::test_p3_9_readiness_scopes_experiments_to_opportunity_id"),
+
+    # M-27: INV-031 engine manifest validator must reject allow_skip_quote_verification=True.
+    ("M-27", "src/research_engine/engines/loader.py",
+     '''    if manifest.safety.allow_skip_quote_verification:''',
+     '''    if False:''',
+     "tests/invariants/test_engine_invariants.py::test_inv_031_engine_manifest_cannot_disable_verification_or_egress_locks"),
+
+    # M-28: INV-032 question quality gate must drop questions with empty changes field.
+    ("M-28", "src/research_engine/pipeline/questions.py",
+     '''        if not q.changes or not q.changes.strip():''',
+     '''        if False:''',
+     "tests/invariants/test_engine_invariants.py::test_inv_032_user_questions_require_changes_and_record_tier2_user_observation"),
+
+    # M-29: INV-032 user answer provenance must be recorded at tier 2, never tier 1.
+    ("M-29", "src/research_engine/pipeline/questions.py",
+     '''        source_tier=2,''',
+     '''        source_tier=1,''',
+     "tests/invariants/test_engine_invariants.py::test_inv_032_user_questions_require_changes_and_record_tier2_user_observation"),
+
+    # M-30: INV-033 negative trail must include rejected evidence items.
+    ("M-30", "src/research_engine/services/trail_service.py",
+     '''        rejected_ev = [e for e in evidence if e.status == EvidenceStatus.REJECTED]''',
+     '''        rejected_ev = []''',
+     "tests/invariants/test_engine_invariants.py::test_inv_033_negative_trail_preserves_rejected_evidence_and_single_source_claims"),
+
+    # M-31: INV-035 domain schema validator must forbid $ref.
+    ("M-31", "src/research_engine/engines/schema.py",
+     '''            if k == "$ref":''',
+     '''            if False:''',
+     "tests/invariants/test_engine_invariants.py::test_inv_035_domain_schema_forbids_external_or_internal_ref"),
+
+    # M-32: INV-013 RelationalKnowledgeBase.seed_project_from_kb must be a no-op unless use_global_kb=True.
+    ("M-32", "src/research_engine/memory/relational_kb.py",
+     '''        if not use_global_kb:''',
+     '''        if False:''',
+     "tests/unit/test_relational_kb.py::test_relational_kb_project_isolation_and_opt_in_seeding_inv_013"),
 ]
 
 

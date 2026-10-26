@@ -1,0 +1,75 @@
+schema_version: 1
+name: product_teardown
+display_name: "Product UX & Monetization Teardown"
+version: "1.0.0"
+description: "Teardown pack for analyzing a product's onboarding, core loop, pricing, retention, and weaknesses."
+extends: generic
+
+clarifier:
+  hint: "product UX, onboarding, monetization, and retention teardown"
+  prompt_template: "problem_clarifier"
+  required_inputs:
+    - "target_product"
+  ask_user_when:
+    - "target platform (web vs mobile vs desktop) is unspecified"
+
+planning:
+  fallback_to_branches: true
+  source_preferences:
+    - web
+    - documentation
+    - forum
+  branches:
+    - category: ONBOARDING
+      default_question: "How does user onboarding and activation work for: {question}?"
+      importance: 0.85
+      required_evidence: "documented onboarding steps, time-to-value, or user friction reports"
+      route: [web, documentation, forum]
+      fallback: true
+    - category: CORE_LOOP
+      default_question: "What is the core engagement loop and key workflow for: {question}?"
+      importance: 0.85
+      required_evidence: "product documentation and user workflow descriptions"
+      route: [web, documentation]
+      fallback: true
+    - category: PRICING
+      default_question: "How is {question} packaged and priced across tiers?"
+      importance: 0.80
+      required_evidence: "pricing page captures, tier limits, and billing terms"
+      route: [web, company]
+      fallback: true
+    - category: RETENTION
+      default_question: "What drives long-term retention or churn for: {question}?"
+      importance: 0.75
+      required_evidence: "user reviews, churn complaints, or switching costs"
+      route: [web, forum]
+      fallback: true
+    - category: WEAKNESSES
+      default_question: "What are the top documented weaknesses and complaints for: {question}?"
+      importance: 0.80
+      required_evidence: "verbatim user complaints, missing features, or reliability issues"
+      route: [web, forum]
+      fallback: true
+
+extraction:
+  schema_hint: "claim; quote; ux_step; friction_level; pricing_tier; competitor_compared"
+  prompt_template: "evidence_extractor"
+  domain_schema: "schema.json"
+  require_verbatim_quote: true
+  require_claim_support: true
+
+analysis:
+  structural_checks:
+    - source_diversity
+    - negative_evidence
+    - independent_replication
+    - competitors
+  specialist_pipeline: null
+
+tunables:
+  max_iterations: 2
+  max_queries_per_iteration: 6
+  results_per_query: 5
+  ask_user_enabled: true
+  ask_user_blocking: false
+  max_user_questions_per_run: 2

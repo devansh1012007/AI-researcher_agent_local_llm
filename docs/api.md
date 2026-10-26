@@ -63,6 +63,13 @@ the token on an external bind.
 - `GET /projects/{project_id}/reports/{name}` — path traversal rejected
 - `POST /projects/{project_id}/review/decisions` — record an analyst review decision (`claim`, `contradiction`, `validation_plan`) as an overlay without rewriting machine state
 
+### Engines, Clarifying Questions & Source Trail
+- `GET /engines` — list available research engine packs (`academic`, `startup`, `generic`, custom)
+- `GET /engines/{name}` — inspect resolved manifest, loop, routes, and 6-layer effective config provenance
+- `GET /projects/{project_id}/questions` — list clarifying questions for a project
+- `POST /projects/{project_id}/questions/{question_id}/answer` — answer or skip a clarifying question (overrides assumption and records `USER_OBSERVATION` evidence)
+- `GET /projects/{project_id}/trail` — unified forward/backward source trail and negative trail (`claim_id` or `source_id` optional filters)
+
 ### Jobs (asynchronous by design, #25/#26)
 - `GET /jobs`
 - `POST /jobs` → 202 `{job_id, status}`

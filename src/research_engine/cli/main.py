@@ -34,7 +34,13 @@ def _project_id_or_fail(cfg: AppConfig, pid: str) -> str:
 def cmd_new(args):
     cfg = _cfg(args)
     from research_engine.core.orchestrator import Orchestrator
-    orch = Orchestrator.create_project(cfg, args.question, mode=args.mode)
+    from research_engine.engines.loader import parse_cli_set_overrides
+    chosen_mode = getattr(args, "engine", None) or getattr(args, "mode", None)
+    cli_ov = parse_cli_set_overrides(getattr(args, "set_overrides", None))
+    orch = Orchestrator.create_project(cfg, args.question, mode=chosen_mode, cli_overrides=cli_ov)
+    if getattr(args, "use_global_kb", False):
+        from research_engine.memory.relational_kb import RelationalKnowledgeBase
+        RelationalKnowledgeBase(cfg.storage.data_dir).seed_project_from_kb(orch.project.id, orch.repos, f"{orch.project.mode}:global", use_global_kb=True)
     console.print(f"[green]Research project created.[/green]")
     console.print(f"  id:      {orch.project.id}")
     console.print(f"  mode:    {orch.project.mode}")
@@ -50,8 +56,10 @@ def cmd_new(args):
 def cmd_run(args):
     cfg = _cfg(args)
     from research_engine.core.orchestrator import Orchestrator
+    from research_engine.engines.loader import parse_cli_set_overrides
     pid = _project_id_or_fail(cfg, args.project_id)
-    orch = Orchestrator.load(cfg, pid)
+    cli_ov = parse_cli_set_overrides(getattr(args, "set_overrides", None))
+    orch = Orchestrator.load(cfg, pid, cli_overrides=cli_ov)
     project = orch.run(max_iterations=args.iterations)
     _print_status(orch)
 
@@ -1163,6 +1171,105 @@ def cmd_doctor(args):
     return 0 if report["status"] == "healthy" else 1
 
 
+
+def cmd_engine_list(args):
+    from research_engine.engines.loader import list_engines
+    table = Table(title="Available Research Engines")
+    table.add_column("name", style="cyan")
+    table.add_column("version")
+    table.add_column("extends")
+    table.add_column("layer")
+    table.add_column("display_name")
+    for m in list_engines():
+        table.add_row(m.name, m.version, m.extends or "-", m.source_layer, m.display_name)
+    console.print(table)
+    return 0
+
+
+def cmd_engine_show(args):
+    from research_engine.engines.loader import get_engine
+    m = get_engine(args.name)
+    console.print(json.dumps(json.loads(m.model_dump_json()), indent=2))
+    return 0
+
+
+def cmd_engine_validate(args):
+    from research_engine.engines.loader import EngineValidationError, validate_engine_target
+    try:
+        m, warnings = validate_engine_target(args.target)
+    except EngineValidationError as exc:
+        console.print(f"[red]INVALID engine ({args.target}):[/red]")
+        for e in exc.errors:
+            console.print(f"  - {e}")
+        return 1
+    console.print(f"[green]VALID[/green] engine '{m.name}' (v{m.version}, {len(m.branch_categories())} categories)")
+    for w in warnings:
+        console.print(f"  [yellow]warning:[/yellow] {w}")
+    return 0
+
+
+def cmd_engine_explain(args):
+    from research_engine.engines.loader import explain_engine, parse_cli_set_overrides
+    cfg = _cfg(args)
+    cli_ov = parse_cli_set_overrides(getattr(args, "set_overrides", None))
+    ws_dir = (Path(cfg.storage.data_dir) / args.project) if getattr(args, "project", "") else None
+    info = explain_engine(args.name, cfg=cfg, project_workspace=ws_dir, cli_overrides=cli_ov, include_vars=bool(args.vars))
+    console.print(json.dumps(info, indent=2, default=str))
+    return 0
+
+
+def cmd_engine_diff(args):
+    from research_engine.engines.loader import diff_engines
+    console.print(json.dumps(diff_engines(args.engine_a, args.engine_b), indent=2, default=str))
+    return 0
+
+
+def cmd_engine_new(args):
+    from research_engine.engines.loader import scaffold_engine
+    target = Path(args.dir) if getattr(args, "dir", "") else None
+    out_dir = scaffold_engine(args.name, target_root=target, extends=args.extends)
+    console.print(f"[green]Scaffolded engine pack:[/green] {out_dir}")
+    return 0
+
+
+def cmd_questions(args):
+    ctx = _ctx4(args)
+    qs = ProjectService(ctx).list_questions(args.project_id, status=args.status)
+    console.print(json.dumps(qs, indent=2, default=str))
+    return 0
+
+
+def cmd_answer(args):
+    ctx = _ctx4(args)
+    q = ProjectService(ctx).answer_question(
+        args.project_id, args.question_id, answer=args.answer or "", skip=bool(args.skip)
+    )
+    console.print(json.dumps(q, indent=2, default=str))
+    return 0
+
+
+def cmd_trail(args):
+    cfg = _cfg(args)
+    from research_engine.core.orchestrator import Orchestrator
+    from research_engine.services.trail_service import TrailService
+    pid = _project_id_or_fail(cfg, args.project_id)
+    orch = Orchestrator.load(cfg, pid)
+    svc = TrailService.from_repos(orch.repos, orch.ws, orch.project)
+    if getattr(args, "export_fmt", "") == "prov":
+        prov = svc.export_prov_json(pid)
+        out_path = orch.ws.export_prov_json(prov)
+        console.print(json.dumps({"prov_json_path": str(out_path), "entities": len(prov.get("entity", {}))}, indent=2))
+        return 0
+    if args.claim:
+        console.print(json.dumps(svc.trail_for_claim(args.claim, pid), indent=2, default=str))
+        return 0
+    if args.source:
+        console.print(json.dumps(svc.trail_for_source(args.source, pid), indent=2, default=str))
+        return 0
+    console.print(json.dumps(svc.build_trail(pid), indent=2, default=str))
+    return 0
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(prog="research", description="GAR local research engine")
     parser.add_argument("--config", help="path to gar.yaml")
@@ -1170,13 +1277,17 @@ def main(argv=None):
 
     p = sub.add_parser("new", help="create and run a new research project")
     p.add_argument("question")
-    p.add_argument("--mode", default=None, choices=["academic", "startup"])
+    p.add_argument("--mode", default=None, help="engine pack / research mode name")
+    p.add_argument("--engine", default=None, help="engine pack name (alias for --mode)")
+    p.add_argument("--set", dest="set_overrides", action="append", default=[], help="override tunable key=value")
+    p.add_argument("--use-global-kb", action="store_true", help="seed project from cross-project RelationalKnowledgeBase")
     p.add_argument("--no-run", action="store_true", help="only create the project")
     p.set_defaults(fn=cmd_new)
 
     p = sub.add_parser("run", help="run/resume a project to completion")
     p.add_argument("project_id")
     p.add_argument("--iterations", type=int, default=None)
+    p.add_argument("--set", dest="set_overrides", action="append", default=[], help="override tunable key=value")
     p.set_defaults(fn=cmd_run)
 
     p = sub.add_parser("status", help="show project status dashboard")
@@ -1479,6 +1590,58 @@ def main(argv=None):
     q.add_argument("opportunity_id", nargs="?", default="")
     q.add_argument("--project", default="")
     q.set_defaults(fn=cmd_startup_next)
+
+    # --- Engine packs, Questions & Source Trail ---
+    ep = sub.add_parser("engine", help="inspect, validate, diff, and scaffold research engine packs")
+    esub = ep.add_subparsers(dest="engine_cmd", required=True)
+
+    e_list = esub.add_parser("list", help="list available research engine packs")
+    e_list.set_defaults(fn=cmd_engine_list)
+
+    e_show = esub.add_parser("show", help="show resolved engine manifest")
+    e_show.add_argument("name")
+    e_show.set_defaults(fn=cmd_engine_show)
+
+    e_val = esub.add_parser("validate", help="validate an engine pack by name or directory")
+    e_val.add_argument("target")
+    e_val.set_defaults(fn=cmd_engine_validate)
+
+    e_exp = esub.add_parser("explain", help="explain effective config layers, loop, and prompt variables")
+    e_exp.add_argument("name")
+    e_exp.add_argument("--vars", action="store_true", help="include resolved prompt template variables")
+    e_exp.add_argument("--project", default="", help="project id for workspace overrides.yaml")
+    e_exp.add_argument("--set", dest="set_overrides", action="append", default=[])
+    e_exp.set_defaults(fn=cmd_engine_explain)
+
+    e_diff = esub.add_parser("diff", help="compare two engine packs")
+    e_diff.add_argument("engine_a")
+    e_diff.add_argument("engine_b")
+    e_diff.set_defaults(fn=cmd_engine_diff)
+
+    e_new = esub.add_parser("new", help="scaffold a new custom engine pack")
+    e_new.add_argument("name")
+    e_new.add_argument("--extends", default="generic")
+    e_new.add_argument("--dir", default="")
+    e_new.set_defaults(fn=cmd_engine_new)
+
+    qp = sub.add_parser("questions", help="list clarifying questions for a project")
+    qp.add_argument("project_id")
+    qp.add_argument("--status", default="", help="filter by status (OPEN|ANSWERED|SKIPPED)")
+    qp.set_defaults(fn=cmd_questions)
+
+    ap = sub.add_parser("answer", help="answer or skip a clarifying question")
+    ap.add_argument("project_id")
+    ap.add_argument("question_id")
+    ap.add_argument("answer", nargs="?", default="")
+    ap.add_argument("--skip", action="store_true")
+    ap.set_defaults(fn=cmd_answer)
+
+    tp = sub.add_parser("trail", help="inspect unified source trail and negative trail")
+    tp.add_argument("project_id")
+    tp.add_argument("--claim", default="")
+    tp.add_argument("--source", default="")
+    tp.add_argument("--export", dest="export_fmt", default="", choices=["", "prov"])
+    tp.set_defaults(fn=cmd_trail)
 
     args = parser.parse_args(argv)
     rc = args.fn(args)

@@ -164,7 +164,12 @@ def classify_source(url: str) -> tuple[SourceType, int]:
     return stype, TIER_BY_SOURCE_TYPE[stype]
 
 
-def route_for(branch_category: str, source_preferences: list[str] | None = None) -> Route:
+def route_for(
+    branch_category: str,
+    source_preferences: list[str] | None = None,
+    engine: str | None = None,
+    routes_map: dict[str, list[str]] | None = None,
+) -> Route:
     """Resolve a branch category (+ optional LLM-provided preferences) to legs.
 
     Preferences are validated against the closed leg vocabulary. An unknown
@@ -176,7 +181,17 @@ def route_for(branch_category: str, source_preferences: list[str] | None = None)
     `Route.dropped_legs`, so "the planner asked for something we do not have"
     is visible instead of silent.
     """
-    base = DEFAULT_ROUTES.get(branch_category, DEFAULT_ROUTES["GENERIC"])
+    resolved_routes = routes_map
+    if resolved_routes is None and engine:
+        try:
+            from research_engine.engines.loader import get_engine
+            resolved_routes = get_engine(engine).routes_by_category()
+        except Exception:
+            resolved_routes = None
+    if resolved_routes and branch_category in resolved_routes:
+        base = resolved_routes[branch_category]
+    else:
+        base = DEFAULT_ROUTES.get(branch_category, DEFAULT_ROUTES["GENERIC"])
     prefs: list[str] = []
     dropped: list[str] = []
     for raw in (source_preferences or []):

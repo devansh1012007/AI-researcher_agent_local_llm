@@ -2,6 +2,7 @@
 
 prompts/templates/<name>/<version>.txt with optional <version>.meta.yaml
 (system prompt, role assignment). Prompts are externalized, never inlined.
+Engine packs may override or add templates under <pack_dir>/prompts/<name>/.
 Rendered copies are saved to the project workspace for audit.
 """
 from __future__ import annotations
@@ -75,6 +76,8 @@ class PromptSpec:
         # P1-8: Extract required placeholders from the RAW template BEFORE
         # substituting untrusted kwargs values. Braces inside scraped text or
         # user content must never be mistaken for unfilled template placeholders.
+        for opt_k, opt_v in (("engine_guidance", ""), ("domain_schema_hint", "(none)")):
+            kwargs.setdefault(opt_k, opt_v)
         required = [m.group(1) for m in _PLACEHOLDER_RE.finditer(self.template)]
         for key in required:
             if key not in kwargs:
@@ -114,12 +117,34 @@ def _load(name: str, version: str | None = None, templates_dir: str = "") -> Pro
                       template=txt_path.read_text())
 
 
-def get_prompt(name: str, version: str | None = None) -> PromptSpec:
+def _resolve_engine_prompts_dir(engine: str | None, workspace_dir: str | Path | None = None) -> Path | None:
+    if not engine:
+        return None
+    try:
+        from research_engine.engines.loader import get_engine
+        manifest = get_engine(engine, workspace_dir=workspace_dir)
+        return manifest.prompts_dir()
+    except Exception:
+        return None
+
+
+def get_prompt(
+    name: str,
+    version: str | None = None,
+    engine: str | None = None,
+    workspace_dir: str | Path | None = None,
+) -> PromptSpec:
     _require_templates_dir()
+    eng_pdir = _resolve_engine_prompts_dir(engine, workspace_dir=workspace_dir)
+    if eng_pdir is not None and (eng_pdir / name).is_dir() and _sorted_versions(eng_pdir / name):
+        return _load(name, version, str(eng_pdir))
     return _load(name, version, str(TEMPLATES_DIR))
 
 
-def record_versions() -> dict[str, str]:
+def record_versions(
+    engine: str | None = None,
+    workspace_dir: str | Path | None = None,
+) -> dict[str, str]:
     _require_templates_dir()
     out = {}
     for d in sorted(TEMPLATES_DIR.iterdir(), key=lambda p: p.name):
@@ -127,4 +152,11 @@ def record_versions() -> dict[str, str]:
             versions = _sorted_versions(d)
             if versions:
                 out[d.name] = versions[-1]
+    eng_pdir = _resolve_engine_prompts_dir(engine, workspace_dir=workspace_dir)
+    if eng_pdir is not None:
+        for d in sorted(eng_pdir.iterdir(), key=lambda p: p.name):
+            if d.is_dir():
+                versions = _sorted_versions(d)
+                if versions:
+                    out[d.name] = f"{versions[-1]}@{engine}"
     return out

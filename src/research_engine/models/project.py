@@ -118,6 +118,8 @@ class ResearchProject(Entity):
     state: ProjectState = ProjectState.CREATED
     stop_reason: StopReason | None = None
     review_gate_pending: str | None = None     # gate awaiting approval
+    approved_gates: list[str] = Field(default_factory=list)
+    loop_cursor: dict = Field(default_factory=dict)
     current_iteration: int = 0
     budget: BudgetUsage = Field(default_factory=BudgetUsage)
     engine_version: str = "0.1.0"

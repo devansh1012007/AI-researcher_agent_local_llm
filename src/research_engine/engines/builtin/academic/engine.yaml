@@ -1,0 +1,203 @@
+schema_version: 1
+name: academic
+display_name: "Scientific / technical literature research"
+version: "1.0.0"
+description: "Peer-reviewed literature, preprints, methods, benchmarks, limitations, and open problems."
+extends: null
+
+clarifier:
+  hint: "scientific/technical literature research"
+  prompt_template: "problem_clarifier"
+  required_inputs: []
+  ask_user_when:
+    - "evaluation metric or benchmark family is unspecified"
+    - "time horizon (all-time vs recent SOTA) is ambiguous"
+
+planning:
+  fallback_to_branches: true
+  source_preferences:
+    - openalex
+    - arxiv
+    - crossref
+    - semantic_scholar
+    - web
+  branches:
+    - category: FOUNDATIONS
+      default_question: "What are the foundational concepts and seminal works for: {question}?"
+      importance: 0.7
+      required_evidence: "any credible supporting evidence"
+      route: [openalex, arxiv, crossref, web]
+      fallback: false
+    - category: CURRENT_STATE
+      default_question: "What is the current state of: {question}?"
+      importance: 0.7
+      required_evidence: "any credible supporting evidence"
+      route: [web, documentation, openalex]
+      fallback: true
+    - category: METHODS
+      default_question: "Which methods/approaches address: {question}?"
+      importance: 0.7
+      required_evidence: "any credible supporting evidence"
+      route: [openalex, arxiv, semantic_scholar, web]
+      fallback: true
+    - category: COMPETING_APPROACHES
+      default_question: "How do competing approaches compare for: {question}?"
+      importance: 0.7
+      required_evidence: "any credible supporting evidence"
+      route: [openalex, arxiv, web]
+      fallback: false
+    - category: EVIDENCE
+      default_question: "What empirical evidence supports claims regarding: {question}?"
+      importance: 0.7
+      required_evidence: "any credible supporting evidence"
+      route: [openalex, crossref, semantic_scholar]
+      fallback: false
+    - category: BENCHMARKS
+      default_question: "What benchmarks/datasets allow comparison of these methods?"
+      importance: 0.7
+      required_evidence: "any credible supporting evidence"
+      route: [openalex, arxiv, web, documentation]
+      fallback: true
+    - category: LIMITATIONS
+      default_question: "What limitations and failure cases are documented?"
+      importance: 0.7
+      required_evidence: "any credible supporting evidence"
+      route: [openalex, arxiv, web]
+      fallback: true
+    - category: CONTRADICTIONS
+      default_question: "What contradictory findings or replication failures exist for: {question}?"
+      importance: 0.7
+      required_evidence: "any credible supporting evidence"
+      route: [openalex, semantic_scholar, web]
+      fallback: false
+    - category: APPLICATIONS
+      default_question: "What real-world applications or deployments exist for: {question}?"
+      importance: 0.7
+      required_evidence: "any credible supporting evidence"
+      route: [web, documentation, openalex]
+      fallback: false
+    - category: OPEN_PROBLEMS
+      default_question: "Which open problems remain unsolved?"
+      importance: 0.7
+      required_evidence: "any credible supporting evidence"
+      route: [arxiv, openalex, web]
+      fallback: true
+
+extraction:
+  schema_hint: "research question; problem; method; model; dataset; experimental setup; metrics; results; baselines; limitations; future work"
+  prompt_template: "evidence_extractor"
+  domain_schema: "schema.json"
+  require_verbatim_quote: true
+  require_claim_support: true
+
+analysis:
+  structural_checks:
+    - source_diversity
+    - negative_evidence
+    - independent_replication
+    - causality
+    - benchmarks
+    - baselines
+    - method_comparison
+  specialist_pipeline: null
+
+loop:
+  setup:
+    - step: clarify
+      pause_after: false
+      gate: AFTER_PROBLEM_DEFINITION
+    - step: ask_user
+      blocking: false
+      max_questions: 3
+    - step: plan
+      pause_after: false
+      gate: AFTER_INITIAL_RESEARCH_PLAN
+    - step: generate_queries
+  per_iteration:
+    - step: search
+      budget: max_queries_per_iteration
+    - step: fetch_and_parse
+      max_parallel: max_parallel_fetches
+    - step: extract_evidence
+    - step: verify_and_dedup
+    - step: detect_contradictions
+    - step: detect_gaps
+    - step: evaluate_convergence
+      pause_after: false
+    - step: generate_followups
+  stop_when:
+    - metric: new_evidence_rate
+      op: "<="
+      value: 0.10
+      after_iteration: 2
+    - metric: duplicate_rate
+      op: ">="
+      value: 0.70
+      after_iteration: 1
+    - metric: gaps_open
+      op: "=="
+      value: 0
+      after_iteration: 1
+  synthesis:
+    - step: write_reports
+
+reports:
+  core:
+    - problem.md
+    - research_plan.md
+    - info.md
+    - sources.md
+    - gaps.md
+    - research_log.md
+  domain:
+    - id: literature_review
+      file: literature_review.md
+  intelligence:
+    - id: evidence_map
+      file: evidence_map.md
+    - id: contradiction_report
+      file: contradiction_report.md
+    - id: research_timeline
+      file: research_timeline.md
+    - id: literature_map
+      file: literature_map.md
+    - id: method_comparison
+      file: methods_comparison.md
+    - id: benchmark_analysis
+      file: benchmark_analysis.md
+  reasoning:
+    - id: hypotheses
+      file: hypotheses.md
+    - id: assumptions
+      file: assumptions.md
+    - id: decision_analysis
+      file: decision_analysis.md
+    - id: methodology
+      file: methodology.md
+    - id: experiment_plan
+      file: experiment_plan.md
+    - id: evaluation_plan
+      file: evaluation_plan.md
+
+tunables:
+  max_iterations: 3
+  max_queries_per_iteration: 8
+  max_documents: 50
+  max_sources_total: 150
+  max_llm_calls: 300
+  max_wall_clock_minutes: 60
+  new_evidence_threshold: 0.10
+  duplicate_rate_converged: 0.70
+  results_per_query: 10
+  max_chunk_chars: 6000
+  chunk_overlap_chars: 400
+  review_gates_enabled: false
+  ask_user_enabled: false
+  ask_user_blocking: false
+  max_user_questions_per_run: 3
+
+safety:
+  allow_skip_quote_verification: false
+  allow_skip_claim_support: false
+  allow_network_in_local_only: false
+  require_counterevidence_for_opportunities: true

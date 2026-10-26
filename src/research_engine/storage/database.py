@@ -10,7 +10,7 @@ from pathlib import Path
 
 log = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -318,6 +318,13 @@ CREATE TABLE IF NOT EXISTS review_decisions (
     content_hash TEXT,
     data TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS questions (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    status TEXT,
+    iteration INTEGER DEFAULT 0,
+    data TEXT NOT NULL
+);
 """
 
 # INVARIANT-003: canonical entity identity is enforced by the database.
@@ -431,6 +438,13 @@ class Database:
             if col not in cols:
                 with c:
                     c.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")
+        with c:
+            c.execute(
+                "CREATE TABLE IF NOT EXISTS questions ("
+                "id TEXT PRIMARY KEY, project_id TEXT NOT NULL, "
+                "status TEXT, iteration INTEGER DEFAULT 0, data TEXT NOT NULL)"
+            )
+            c.execute("INSERT OR REPLACE INTO meta(key, value) VALUES('schema_version', ?)", (str(SCHEMA_VERSION),))
         self._backfill_experiment_opportunity_ids(c)
 
     def _backfill_experiment_opportunity_ids(self, c) -> None:

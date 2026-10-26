@@ -37,6 +37,7 @@ from pathlib import Path
 ROOT = Path(__file__).parents[1]
 SRC = ROOT / "src"
 TEMPLATES_DIR = SRC / "research_engine" / "prompts" / "templates"
+BUILTIN_ENGINES_DIR = SRC / "research_engine" / "engines" / "builtin"
 REQUIRED_DISTS = ("fastapi", "uvicorn")
 
 
@@ -98,6 +99,14 @@ def check_templates_in_wheel(wheel: Path) -> set[str]:
         fail(f"{len(missing)} template file(s) missing from the wheel: {missing}")
     template_names = {p.name for p in TEMPLATES_DIR.iterdir() if p.is_dir()}
     print(f"  OK  {len(expected)} template files ({len(template_names)} templates) in the wheel")
+    expected_eng = {
+        str(p.relative_to(SRC)).replace(os.sep, "/")
+        for p in BUILTIN_ENGINES_DIR.rglob("*") if p.is_file()
+    }
+    missing_eng = sorted(expected_eng - names)
+    if missing_eng:
+        fail(f"{len(missing_eng)} builtin engine file(s) missing from the wheel: {missing_eng}")
+    print(f"  OK  {len(expected_eng)} builtin engine pack files in the wheel")
     return template_names
 
 

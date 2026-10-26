@@ -40,6 +40,10 @@ oversized lines return JSON-RPC error `-32600` (`Invalid Request: line exceeds 1
 | `design_methodology` | RESEARCH | 3-tier designs w/ pre-registered criteria |
 | `add_experiment_result` | WRITE | verdict vs pre-registered criteria |
 | `record_review_decision` | WRITE | analyst review decision overlay on claim/contradiction/validation_plan |
+| `list_engines` | READ | list available declarative research engine packs and categories |
+| `get_pending_questions` | READ | list clarifying questions for a project |
+| `answer_question` | WRITE | answer or skip a clarifying question for a project |
+| `get_source_trail` | READ | unified source trail and negative trail for a project, claim, or source |
 | `startup_research` | RESEARCH | full startup pipeline: discovery -> hypotheses -> validation -> decision |
 | `startup_discover_opportunities` | RESEARCH | evidence-pattern opportunity discovery |
 | `startup_get_market_map` | READ | market map: definition, gaps, segments, competitors, trends |

@@ -296,7 +296,7 @@ class PersistentScheduler:
                                             fence=task.attempts)
                         current_task = None
                         continue
-                    if job.status in (JobStatus.PAUSING, JobStatus.PAUSED):
+                    if job.status in (JobStatus.PAUSING, JobStatus.PAUSED, JobStatus.WAITING_FOR_USER):
                         # release cleanly back to queue (fenced)
                         try:
                             self.db.release_task(task.id, self._worker_id,
@@ -304,6 +304,7 @@ class PersistentScheduler:
                         except Exception as exc:
                             self.log.warn("release_rejected", task_id=task.id,
                                           error=str(exc)[:120])
+                        self._advance_one(task.job_id)
                         self._stop.wait(self.cfg.poll_interval)
                         continue
                     if job.is_terminal():

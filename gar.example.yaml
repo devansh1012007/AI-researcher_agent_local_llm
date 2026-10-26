@@ -22,14 +22,16 @@ models:
     max_tokens: 4096
 
 research:
-  mode: academic          # academic | startup (default mode for new projects)
-  max_iterations: 3
-  max_queries_per_iteration: 8
-  max_documents: 50
-  max_sources_total: 150
-  max_llm_calls: 300
-  max_wall_clock_minutes: 60
-  review_gates_enabled: false   # true => pauses at problem/plan/cycle/synthesis gates
+  mode: academic          # default engine pack for new projects (academic | startup | generic | custom)
+  # Per-engine budgets and thresholds default to the active engine pack's `tunables:`
+  # section in engine.yaml (Layer 2). Uncomment any key below to override globally across all engines (Layer 3):
+  # max_iterations: 3
+  # max_queries_per_iteration: 8
+  # max_documents: 50
+  # max_sources_total: 150
+  # max_llm_calls: 300
+  # max_wall_clock_minutes: 60
+  # review_gates_enabled: false   # true => pauses at problem/plan/cycle/synthesis gates
 
 network:
   timeout_seconds: 20
@@ -40,12 +42,12 @@ resources:
   max_parallel_fetches: 5       # IO-bound, safe to parallelize
   max_parallel_llm_tasks: 1     # keep at 1 on laptop GPUs
   max_document_size_mb: 10
-  max_chunk_chars: 6000
+  # max_chunk_chars: 6000       # defaults to engine.yaml tunables
 
 search:
   web_provider: duckduckgo      # duckduckgo | searxng | none
   searxng_base_url: ""          # e.g. http://localhost:8080 (recommended for reliability)
-  results_per_query: 10
+  # results_per_query: 10       # defaults to engine.yaml tunables
   academic_providers: [openalex, crossref, arxiv]
   semantic_scholar_api_key: ""
 

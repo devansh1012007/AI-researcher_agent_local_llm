@@ -23,9 +23,21 @@ class ConflictError(Exception):
 
 
 # --------------------------------------------------------------------- DTOs
+from pydantic import create_model
+
 class ProjectCreate(BaseModel):
     question: str = Field(min_length=8, max_length=2000)
-    mode: str = Field(default="academic", pattern="^(academic|startup)$")
+    mode: str = Field(default="academic")
+
+    def __init__(self, **data):
+        super().__init__(**data)
+        from research_engine.engines.loader import engine_names, get_engine
+        try:
+            get_engine(self.mode)
+        except Exception:
+            allowed = "|".join(engine_names()) or "academic|startup"
+            _M = create_model("ProjectCreateMode", mode=(str, Field(..., pattern=f"^({allowed})$")))
+            _M.model_validate({"mode": self.mode})
 
 
 class ResearchStart(BaseModel):
@@ -179,6 +191,49 @@ class ProjectService:
                 raise ConflictError("project has active jobs")
         import shutil
         shutil.rmtree(Path(self.ctx.data_dir, project_id), ignore_errors=True)
+
+    def list_questions(self, project_id: str, status: str = "") -> list[dict]:
+        from research_engine.core.orchestrator import Orchestrator
+        try:
+            orch = Orchestrator.load(self.ctx.cfg, project_id)
+        except FileNotFoundError as exc:
+            raise NotFoundError("project", project_id) from exc
+        rows = (
+            orch.repos.questions.all(project_id, "status=?", (status.upper(),))
+            if status
+            else orch.repos.questions.all(project_id)
+        )
+        return [json.loads(q.model_dump_json()) for q in rows]
+
+    def answer_question(self, project_id: str, question_id: str, answer: str = "", skip: bool = False) -> dict:
+        from research_engine.core.orchestrator import Orchestrator
+        from research_engine.pipeline.questions import answer_question as _ans
+        try:
+            orch = Orchestrator.load(self.ctx.cfg, project_id)
+        except FileNotFoundError as exc:
+            raise NotFoundError("project", project_id) from exc
+        try:
+            q = _ans(orch.repos, project_id, question_id, answer_text=answer, skip=skip)
+        except KeyError as exc:
+            raise NotFoundError("question", question_id) from exc
+        return json.loads(q.model_dump_json())
+
+    def get_trail(self, project_id: str, claim_id: str = "", source_id: str = "") -> dict:
+        from research_engine.core.orchestrator import Orchestrator
+        from research_engine.services.trail_service import TrailService
+        try:
+            orch = Orchestrator.load(self.ctx.cfg, project_id)
+        except FileNotFoundError as exc:
+            raise NotFoundError("project", project_id) from exc
+        svc = TrailService.from_repos(orch.repos, orch.ws, orch.project)
+        try:
+            if claim_id:
+                return svc.trail_for_claim(claim_id, project_id)
+            if source_id:
+                return svc.trail_for_source(source_id, project_id)
+            return svc.build_trail(project_id)
+        except KeyError as exc:
+            raise NotFoundError("trail target", claim_id or source_id) from exc
 
     def _load_project(self, project_id: str):
         from research_engine.core.orchestrator import Orchestrator
