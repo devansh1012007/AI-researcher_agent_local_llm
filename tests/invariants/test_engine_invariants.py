@@ -139,8 +139,7 @@ def test_inv_034_startup_pack_enforces_counterevidence_and_decision_contract(tmp
         project_id="p_st",
         problem="Manual invoice reconciliation pain",
         customer_segment="SMB retailers",
-        supporting_evidence=["ev_sup1"],
-        counter_evidence=["ev_con1"],
+        evidence_ids=["ev_sup1", "ev_con1"],
     )
     repos.opportunities.save(opp)
     pair = oe.counter_evidence_pair("p_st", opp)
