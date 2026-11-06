@@ -519,6 +519,214 @@ class StartupResearchService:
                 "diligence": diligence}
 
     # ------------------------------------------------- canonical read paths
+    # ------------------------------------------------------ idea evaluation
+    IDEA_NOTE = "USER_IDEA"
+
+    def idea_card(self, project_id: str):
+        """The idea card: question text, overridden by answered required-input questions."""
+        from research_engine.specialists.startup.idea import (
+            answers_from_questions, merge_answers, parse_idea_card)
+        orch = self._orch(project_id)
+        proj = orch.repos.projects.get(project_id)
+        card = parse_idea_card(getattr(proj, "question_raw", "") or "")
+        try:
+            answers = answers_from_questions(orch.repos.questions.all(project_id))
+        except Exception as exc:   # a missing questions table must not break evaluation
+            log.warning("idea card: answers unavailable: %s", exc)
+            answers = {}
+        return merge_answers(card, answers)
+
+    @staticmethod
+    def _counterevidence_searched(repos, project_id: str) -> bool:
+        """True only if an adversarial query actually ran (kind=contradiction or a RISKS branch)."""
+        branches = {b.id: b for b in repos.branches.all(project_id)}
+        for q in repos.queries.all(project_id):
+            if not q.executed or q.failed:
+                continue
+            b = branches.get(q.branch)
+            if q.kind == "contradiction" or (b is not None and b.category == "RISKS"):
+                return True
+        return False
+
+    def _upsert_idea_opportunity(self, ctx: dict, card):
+        """The user's idea becomes THE opportunity under evaluation. Evidence is linked only
+        when it overlaps the idea's own words; zero overlap stays SPECULATIVE (never padded
+        with market-wide evidence)."""
+        from research_engine.models.opportunity import Opportunity
+        from research_engine.specialists.startup.opportunities import _token_overlap
+        from research_engine.specialists.startup.policies import opportunity_type
+        repos = ctx["_repos"][0]
+        pid = ctx["project_id"]
+        text = card.text_for_matching()
+        linked = [p for p in ctx["pains"] if _token_overlap(text, p["statement"]) >= 2]
+        linked.sort(key=lambda p: -float(p.get("hierarchy_weight", 0.0)))
+        ids = [p["evidence_id"] for p in linked]
+        for plan in ctx["pricing_plans"]:
+            ev = repos.evidence.get(plan.evidence_id) if plan.evidence_id else None
+            if ev is not None and _token_overlap(text, ev.claim_text) >= 2 and plan.evidence_id not in ids:
+                ids.append(plan.evidence_id)
+        ids = ids[:20]
+        severity = (sum(float(p.get("severity_hint", 0.0)) for p in linked) / len(linked)) if linked else 0.0
+        frequency = (sum(1 for p in linked if p.get("frequency_signal")) / len(linked)) if linked else 0.0
+
+        existing = next((o for o in repos.opportunities.all(pid)
+                         if (o.notes or "").startswith(self.IDEA_NOTE)), None)
+        opp = existing or Opportunity(project_id=pid, problem="", notes="")
+        opp.problem = (card.problem or card.idea)[:400]
+        opp.customer_segment = card.customer_segment or "unclassified"
+        opp.job_to_be_done = (card.problem or card.idea)[:200]
+        opp.current_alternative = card.alternative or "unknown"
+        opp.evidence_ids = ids
+        opp.severity = round(severity, 3)
+        opp.frequency = round(frequency, 3)
+        opp.notes = f"{self.IDEA_NOTE}: stated by the user, not derived from an evidence pattern"
+        opp.opportunity_type = opportunity_type(opp.problem + " " + opp.job_to_be_done)
+        if existing is None:
+            opp.ensure_id()
+        repos.opportunities.save(opp)
+        return opp
+
+    def idea_evaluation_view(self, project_id: str) -> dict:
+        """READ-ONLY (INV-004): everything the idea evaluation report shows, derived from
+        persisted state. The ONLY place the verdict is computed."""
+        from research_engine.specialists.startup.idea import (
+            FALSIFIED_STATUSES, founder_fields, idea_verdict, parse_test_note)
+        from research_engine.specialists.startup.models import FounderProfile
+
+        card = self.idea_card(project_id)
+        ctx = self.build_market_context(project_id, persist=False)
+        repos, _srepos, rrepos, _graph = ctx["_repos"]
+        handles = ctx["_analyzer_handles"]
+        engine, decisions = handles["opportunities"], handles["decisions"]
+        opp = next((o for o in repos.opportunities.all(project_id)
+                    if (o.notes or "").startswith(self.IDEA_NOTE)), None)
+        base = {"idea_card": card.to_dict(),
+                "unanswered_inputs": card.missing_essential() + card.missing_optional()}
+        if opp is None:
+            return {**base, "opportunity_id": None, "verdict": None,
+                    "error": "the idea opportunity has not been created: run the pipeline"}
+
+        sb = opp.score_breakdown or {}
+        gate = sb.get("gate", {})
+        pair = engine.counter_evidence_pair(project_id, opp)
+        readiness = decisions.readiness(project_id, opp.id, gate)
+        opp_asm = [a for a in rrepos.assumptions.all(project_id) if a.opportunity_id == opp.id]
+        rec = decisions.recommend(project_id, opp, gate, readiness, opp_asm, counter_pair=pair)
+        falsified = [a for a in opp_asm if a.kind == "critical" and a.status in FALSIFIED_STATUSES]
+        # ResultIngestor moves HYPOTHESES (not assumptions) to CONTRADICTED when a completed
+        # test contradicts them; nothing else sets Assumption.status. Count both.
+        hyp_ids = ({a.hypothesis_id for a in opp_asm if a.hypothesis_id}
+                   | {e.hypothesis_id for e in rrepos.experiments.all(project_id)
+                      if e.opportunity_id == opp.id and e.hypothesis_id})
+        contradicted = []
+        for hid in sorted(hyp_ids):
+            h = rrepos.hypotheses.get(hid)
+            if h is not None and h.status == "CONTRADICTED" and h.contradicting_evidence:
+                contradicted.append(h)
+        falsified_ids = ({a.hypothesis_id or a.id for a in falsified}
+                         | {h.id for h in contradicted})
+        verdict = idea_verdict(card, gate=gate, recommendation=rec,
+                               falsified_critical=len(falsified_ids),
+                               linked_evidence=len(opp.evidence_ids),
+                               falsified_notes=[h.statement[:100] for h in contradicted])
+        ranked = sorted(opp_asm, key=lambda a: -a.priority)[:8]
+        tests = []
+        for e in rrepos.experiments.all(project_id):
+            if e.opportunity_id != opp.id:
+                continue
+            note = parse_test_note(e.decision_note)
+            tests.append({"title": e.title, "status": e.status, "cost": note.get("cost", ""),
+                          "success": note.get("success", ""), "kill": note.get("fail", ""),
+                          "decision_rule": note.get("decision", ""),
+                          "info_gain": note.get("info_gain", "")})
+        tests.sort(key=lambda t: -float(t["info_gain"] or 0))
+        grouped: dict[tuple, dict] = {}
+        for t in tests:   # near-duplicate assumptions yield identical tests: show each once
+            key = (t["title"].split("]")[0], t["success"], t["kill"])
+            if key in grouped:
+                grouped[key]["covers"] += 1
+            else:
+                grouped[key] = {**t, "covers": 1}
+        tests = list(grouped.values())
+        fit = None
+        ff = founder_fields(card.founder_constraints)
+        if ff:
+            try:
+                fit = decisions.founder_fit({**sb, "segment": opp.customer_segment},
+                                            FounderProfile(project_id=project_id, **ff))
+            except Exception as exc:
+                log.warning("founder fit skipped: %s", exc)
+        return {
+            **base, "opportunity_id": opp.id, "verdict": verdict, "scorecard": sb,
+            "gate": gate, "readiness": readiness, "recommendation": rec,
+            "counter_pair": pair, "why_not_built": engine.why_not_built(project_id, opp, ctx),
+            "moats": engine.moat_analysis(project_id, opp),
+            "assumptions": [{"statement": a.statement[:220], "kind": a.kind,
+                             "category": a.category, "status": a.status,
+                             "priority": round(a.priority, 3),
+                             "falsification_test": (a.falsification_test or "")[:200]} for a in ranked],
+            "tests": tests, "founder_fit": fit,
+            "linked_evidence": len(opp.evidence_ids),
+        }
+
+    def run_validation_pipeline(self, project_id: str) -> dict:
+        """Called by the orchestrator at synthesize time (startup_validation engine).
+
+        Evaluates the user's ONE idea: link evidence, score, gate, argue against, design
+        the cheapest tests, derive a verdict. No discovery of other opportunities.
+        Returns the same shape as run_full_pipeline (discovery/validation/diligence) so the
+        existing read-only startup reports render it, plus an `evaluation` block."""
+        card = self.idea_card(project_id)
+        orch = self._orch(project_id)
+        repos0, srepos0, rrepos0, graph0 = self._repos_for(orch)
+        counter_searched = self._counterevidence_searched(repos0, project_id)
+
+        ctx = self.build_market_context(project_id)
+        ctx["counterevidence_searched_actual"] = counter_searched
+        repos, srepos, rrepos, graph = ctx["_repos"]
+        handles = ctx["_analyzer_handles"]
+        engine = handles["opportunities"]
+
+        opp = self._upsert_idea_opportunity(ctx, card)
+        gctx = _gate_ctx(ctx)
+        sb = engine.score_rubric(project_id, opp, gctx)
+        sb["gate"] = engine.quality_gate(project_id, opp, gctx, factors=sb.get("factors"))
+        opp.score_breakdown = sb
+        opp.confidence = sb["factors"]["evidence_strength"]
+        repos.opportunities.save(opp)
+
+        provider = getattr(getattr(orch, "router", None), "reasoning", None)
+        n_hyp = self._ensure_business_hypotheses(repos, rrepos, provider, project_id, opp)
+
+        validation = self._mode_validation_planning(ctx, opportunity_id=opp.id)
+        validation.setdefault("business_hypotheses_created", n_hyp)
+        diligence = self._mode_opportunity_due_diligence(ctx, opportunity_id=opp.id)
+        # Due diligence recomputes the gate WITHOUT the demand-sanity factors; re-apply the
+        # factored gate so weak pain + weak payment evidence still caps the priority (#81).
+        opp = repos.opportunities.get(opp.id) or opp
+        sb = opp.score_breakdown or sb
+        sb["gate"] = engine.quality_gate(project_id, opp, _gate_ctx(ctx), factors=sb.get("factors"))
+        opp.score_breakdown = sb
+        opp.notes = (f"{self.IDEA_NOTE}: stated by the user, not derived from an evidence pattern"
+                     + ("; SPECULATIVE: no supporting evidence" if sb["gate"].get("speculative") else ""))
+        repos.opportunities.save(opp)
+
+        evaluation = self.idea_evaluation_view(project_id)
+        evaluation["counterevidence_searched"] = counter_searched
+        try:
+            ctx2 = self.build_market_context(project_id, seed_kb=False)
+            self.kb.remember_market(ctx2["market"], ctx2["competitor_profiles"],
+                                    ctx2["pricing_plans"], ctx2["channels"])
+        except Exception as exc:   # KB write must never fail the run
+            log.warning("startup KB remember failed: %s", exc)
+        discovery = {"count": 1, "patterns_seen": ["USER_IDEA"],
+                     "opportunities": [{"opportunity_id": opp.id, "problem": opp.problem[:160],
+                                        "total_score": sb.get("total", 0),
+                                        "priority": sb.get("gate", {}).get("priority", ""),
+                                        "portfolio_slot": "idea under evaluation"}]}
+        return {"discovery": discovery, "validation": validation, "diligence": diligence,
+                "evaluation": evaluation}
+
     def assumption_register(self, project_id: str,
                             opportunity_id: str = "") -> list[dict]:
         """Priority-ranked assumption register (canonical CLI/MCP path)."""
@@ -557,7 +765,9 @@ def _gate_ctx(ctx: dict) -> dict:
     have assumptions been built / tests designed for this project yet?"""
     g = dict(ctx)
     repos, srepos, rrepos, graph = ctx["_repos"]
-    g["counterevidence_searched"] = True   # adversarial pass runs in the core loop
+    # Legacy startup path: the adversarial pass is assumed to run in the core loop.
+    # startup_validation measures it (ctx["counterevidence_searched_actual"]).
+    g["counterevidence_searched"] = ctx.get("counterevidence_searched_actual", True)
     g["assumptions_built"] = rrepos.assumptions.count(ctx["project_id"]) > 0
     g["validation_designed"] = rrepos.experiments.count(ctx["project_id"]) > 0
     g.setdefault("retention_signals", [])

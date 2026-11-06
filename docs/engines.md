@@ -21,7 +21,7 @@ engines/<engine_name>/
 1. **Project-local pack**: `<project_workspace>/engine/engine.yaml`
 2. **Workspace / custom search dirs**: `./engines/<name>/engine.yaml` or `$GAR_ENGINES_DIR/<name>/engine.yaml`
 3. **User config pack**: `~/.config/gar/engines/<name>/engine.yaml`
-4. **Built-in packs**: `src/research_engine/engines/builtin/{academic,startup,generic}/engine.yaml`
+4. **Built-in packs**: `src/research_engine/engines/builtin/{academic,startup,startup_validation,generic}/engine.yaml`
 
 ## 2. Six-Layer Effective Configuration Precedence
 

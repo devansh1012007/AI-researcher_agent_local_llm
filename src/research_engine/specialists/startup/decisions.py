@@ -21,6 +21,12 @@ from research_engine.storage.reasoning_repos import ReasoningRepos
 from research_engine.storage.repositories import Repositories
 
 
+# Assumption.status uses validated/invalidated (models/reasoning.py); older code and
+# tests used verified/falsified. Accept both so completed tests are actually counted.
+_VALIDATED = ("validated", "verified")
+_FALSIFIED = ("invalidated", "falsified")
+
+
 class DecisionEngine:
     def __init__(self, repos: Repositories, rrepos: ReasoningRepos, srepos=None):
         self.repos = repos
@@ -39,7 +45,7 @@ class DecisionEngine:
         # critical assumptions with results?
         asm = [a for a in self.rrepos.assumptions.all(project_id)
                if not opportunity_id or a.opportunity_id == opportunity_id]
-        tested = [a for a in asm if a.status in ("verified", "falsified")]
+        tested = [a for a in asm if a.status in _VALIDATED + _FALSIFIED]
         critical_untested = [a for a in asm
                              if a.kind == "critical" and a.status == "unverified"]
 
@@ -52,10 +58,10 @@ class DecisionEngine:
             experiments = self.rrepos.experiments.all(project_id)
         has_tests = bool(experiments)
 
-        if len(tested) >= 2 and all(a.status != "falsified" for a in tested) \
+        if len(tested) >= 2 and all(a.status not in _FALSIFIED for a in tested) \
                 and not critical_untested:
             level = "DECISION_READY"
-        elif tested and any(a.status == "verified" for a in tested):
+        elif tested and any(a.status in _VALIDATED for a in tested):
             level = "PILOT_READY"
         elif has_tests and covered >= 0.7:
             level = "VALIDATION_READY"
@@ -72,9 +78,9 @@ class DecisionEngine:
             "missing_dimensions": [k for k, v in checks.items() if not v],
             "critical_assumptions_untested": len(critical_untested),
             "assumptions_tested": {"verified":
-                                   sum(1 for a in tested if a.status == "verified"),
+                                   sum(1 for a in tested if a.status in _VALIDATED),
                                    "falsified":
-                                   sum(1 for a in tested if a.status == "falsified")},
+                                   sum(1 for a in tested if a.status in _FALSIFIED)},
         }
 
     # ------------------------------------------------------- transition rule

@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "StartupValidationEvidenceAttributes",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "customer_segment": { "type": "string" },
+    "pain_statement": { "type": "string" },
+    "frequency_signal": {
+      "type": "string",
+      "enum": ["one_off", "occasional", "recurring", "daily", "unknown"]
+    },
+    "current_workaround": { "type": "string" },
+    "competitor_or_alternative": { "type": "string" },
+    "pricing_raw": { "type": "string" },
+    "demand_signal_type": {
+      "type": "string",
+      "enum": ["casual_opinion", "survey_intention", "interview_evidence", "prototype_usage", "repeated_behavioral_usage", "payment", "none"]
+    },
+    "stance_on_idea": {
+      "type": "string",
+      "enum": ["supports", "contradicts", "mixed", "unrelated"]
+    }
+  }
+}

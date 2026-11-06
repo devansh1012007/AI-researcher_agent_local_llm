@@ -338,6 +338,106 @@ class StartupReportWriter:
         path.write_text("\n".join(L) + "\n", encoding="utf-8")
         return str(path)
 
+    def write_idea_evaluation(self, view: dict) -> str:
+        """Render idea_evaluation.md from the READ-ONLY service view. Pure rendering."""
+        L: list[str] = []
+        add = L.append
+        card = view.get("idea_card", {})
+        add(f"# Idea Evaluation: {card.get('idea') or '(idea not stated)'}\n")
+        verdict = view.get("verdict")
+        if not verdict:
+            add(f"**No verdict.** {view.get('error', 'the evaluation did not run')}\n")
+            path = self.reports_dir / "idea_evaluation.md"
+            path.write_text("\n".join(L) + "\n", encoding="utf-8")
+            return str(path)
+        add(f"## Verdict: {verdict['verdict']}\n")
+        add(f"{verdict['meaning']}\n")
+        for r in verdict["reasons"]:
+            add(f"- {r}")
+        add(f"\n_{verdict['note']}_\n")
+        add("## The idea as stated\n")
+        for k in ("problem", "customer_segment", "alternative", "price_point",
+                  "riskiest_assumption", "geography", "existing_traction",
+                  "founder_constraints"):
+            src = card.get("sources", {}).get(k, "")
+            val = card.get(k) or "_not provided_"
+            tag = " (from your answer)" if src == "answer" else ""
+            add(f"- **{k}**: {val}{tag}")
+        if card.get("existing_traction"):
+            add("\n_Traction is your own statement and is not counted as evidence._")
+        add("")
+        add(f"## Evidence linked to this idea: {view.get('linked_evidence', 0)}\n")
+        sb = view.get("scorecard", {})
+        add("## Scorecard (visible dimensions, no fake precision)\n")
+        for dim in sb.get("weights", {}):
+            reason = sb.get("reasons", {}).get(dim, "")
+            if dim == "competition_weakness" and "/ 0 total" in reason:
+                reason += (" — NOTE: zero researched competitors means UNRESEARCHED, "
+                           "not room in the market")
+            add(f"- {dim}: **{sb.get('labels', {}).get(dim, '?')}** "
+                f"({sb.get('factors', {}).get(dim, 0)}) — {reason}")
+        add(f"- composite: {sb.get('total')} _(ranking aid only; the dimensions are authoritative)_\n")
+        pair = view.get("counter_pair", {})
+        add("## Evidence for\n" + (pair.get("strongest_argument_for") or "_none found_") + "\n")
+        add("## Evidence against (strongest argument against the idea)\n"
+            + (pair.get("strongest_argument_against") or "_none found; this is not proof there is none_"))
+        for n in pair.get("negative_evidence", [])[:6]:
+            add(f"- {str(n.get('text', ''))[:160]}")
+        add("")
+        wnb = view.get("why_not_built", {})
+        add("## Why has this not been built already?\n")
+        add(f"Most likely explanation: **{wnb.get('most_likely', 'unknown')}**\n")
+        if card.get("riskiest_assumption"):
+            add(f"Your stated riskiest assumption: _{card['riskiest_assumption']}_. "
+                "If no assumption below covers it, test it first.\n")
+        add("## Assumptions ranked by risk (test the top one first)\n")
+        for a in view.get("assumptions", []):
+            add(f"- [{a['kind']}/{a['category'] or '-'}] {a['statement']} "
+                f"(status {a['status']}, priority {a['priority']})")
+            if a.get("falsification_test"):
+                add(f"    - falsify by: {a['falsification_test']}")
+        if not view.get("assumptions"):
+            add("_No assumptions were generated._")
+        add("")
+        add("## Cheapest decisive tests, with success and kill thresholds\n")
+        add("_Fix these thresholds before running a test and do not move them afterwards._\n")
+        for t in view.get("tests", [])[:8]:
+            covers = f", covers {t['covers']} assumptions" if t.get("covers", 1) > 1 else ""
+            add(f"- **{t['title']}** (cost {t['cost'] or '?'}, status {t['status']}{covers})")
+            add(f"    - success: {t['success'] or 'not stated'}")
+            add(f"    - kill: {t['kill'] or 'not stated'}")
+            if t.get("decision_rule"):
+                add(f"    - decision rule: {t['decision_rule']}")
+        if not view.get("tests"):
+            add("_No tests designed yet._")
+        add("")
+        rd = view.get("readiness", {})
+        add(f"## Readiness: {rd.get('level', '?')}\n")
+        add(f"- coverage {rd.get('coverage', {}).get('covered', '?')}/"
+            f"{rd.get('coverage', {}).get('total', '?')}; critical assumptions untested: "
+            f"{rd.get('critical_assumptions_untested', '?')}")
+        if rd.get("missing_dimensions"):
+            add("- missing: " + ", ".join(rd["missing_dimensions"]))
+        rec = view.get("recommendation", {})
+        add("\n## What would change this verdict\n")
+        add(rec.get("what_would_change_this_recommendation", "_n/a_"))
+        add("\n## Best next action\n")
+        add(rec.get("best_next_action", "_n/a_"))
+        fit = view.get("founder_fit")
+        if fit:
+            add(f"\n## Founder fit (separate from idea quality)\n\n- {fit['verdict']} "
+                f"(feasibility {fit['founder_feasibility']}); " + "; ".join(fit.get("notes", [])))
+        elif card.get("founder_constraints"):
+            add("\n_Founder constraints were given as free text; use `skills=a,b; capital=...; "
+                "time=...` for a structured founder-fit assessment._")
+        un = view.get("unanswered_inputs", [])
+        if un:
+            add("\n## Inputs you did not provide (treated as unknown, not assumed)\n")
+            add(", ".join(un))
+        path = self.reports_dir / "idea_evaluation.md"
+        path.write_text("\n".join(L) + "\n", encoding="utf-8")
+        return str(path)
+
     # ------------------------------------------------------------- epistemics
     def _epistemic_blocks(self, ctx, discovery, validation, diligence):
         """Derive KNOW/THINK/ASSUME/DONT_KNOW/TEST from artifact states."""

@@ -79,6 +79,7 @@ STRUCTURAL_CHECK_REGISTRY: frozenset[str] = frozenset({
 
 SPECIALIST_REGISTRY: frozenset[str] = frozenset({
     "startup",
+    "startup_validation",
 })
 
 CORE_REPORT_FILES: frozenset[str] = frozenset({
@@ -94,6 +95,7 @@ CORE_REPORT_FILES: frozenset[str] = frozenset({
 DOMAIN_REPORT_REGISTRY: dict[str, str] = {
     "literature_review": "literature_review.md",
     "startup_research": "startup_research.md",
+    "idea_evaluation": "idea_evaluation.md",
 }
 
 INTELLIGENCE_REPORT_REGISTRY: dict[str, str] = {

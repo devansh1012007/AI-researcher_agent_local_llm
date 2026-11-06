@@ -241,6 +241,30 @@ MUTATIONS = [
      '''        if not use_global_kb:''',
      '''        if False:''',
      "tests/unit/test_relational_kb.py::test_relational_kb_project_isolation_and_opt_in_seeding_inv_013"),
+
+    # M-33: INV-036 a positive idea verdict must require counterevidence AND competition research.
+    ("M-33", "src/research_engine/specialists/startup/idea.py",
+     '''POSITIVE_VERDICT_REQUIRES = ("counterevidence_searched", "competition_researched")''',
+     '''POSITIVE_VERDICT_REQUIRES = ()''',
+     "tests/unit/test_idea_card.py::test_positive_verdict_requires_counterevidence_and_competition"),
+
+    # M-34: INV-036 evidence is linked to the idea only when it overlaps the idea's own words.
+    ("M-34", "src/research_engine/specialists/startup/service.py",
+     '''        linked = [p for p in ctx["pains"] if _token_overlap(text, p["statement"]) >= 2]''',
+     '''        linked = [p for p in ctx["pains"]]''',
+     "tests/invariants/test_idea_evaluation_invariants.py::test_inv_036_unlinked_market_evidence_is_never_padded_onto_the_idea"),
+
+    # M-35: counterevidence coverage must be measured, not assumed (a failed query does not count).
+    ("M-35", "src/research_engine/specialists/startup/service.py",
+     '''            if not q.executed or q.failed:''',
+     '''            if not q.executed:''',
+     "tests/specialists/test_startup_validation.py::test_counterevidence_coverage_is_measured_not_assumed"),
+
+    # M-36: assumption status vocabulary: a completed test must be counted by readiness().
+    ("M-36", "src/research_engine/specialists/startup/decisions.py",
+     '''_VALIDATED = ("validated", "verified")''',
+     '''_VALIDATED = ("verified",)''',
+     "tests/specialists/test_startup_validation.py::test_readiness_counts_completed_tests_in_both_status_vocabularies"),
 ]
 
 

@@ -274,6 +274,9 @@ def _simulate_state_walk(manifest: EngineManifest) -> list[str]:
     return errs
 
 
+_STARTUP_SPECIALISTS = frozenset({"startup", "startup_validation"})
+
+
 def validate_manifest(
     manifest: EngineManifest,
     pack_dir: Path | None = None,
@@ -305,7 +308,8 @@ def validate_manifest(
     if not manifest.extraction.require_claim_support:
         errors.append("extraction.require_claim_support must be True (locked by INV-005/INV-031)")
     if (
-        manifest.analysis.specialist_pipeline == "startup" or manifest.name == "startup"
+        manifest.analysis.specialist_pipeline in _STARTUP_SPECIALISTS
+        or manifest.name in _STARTUP_SPECIALISTS
     ) and not manifest.safety.require_counterevidence_for_opportunities:
         errors.append(
             "safety.require_counterevidence_for_opportunities must be True for startup engine (locked by INV-034)"

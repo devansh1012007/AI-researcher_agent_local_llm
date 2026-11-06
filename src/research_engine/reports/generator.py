@@ -154,6 +154,7 @@ class ReportGenerator:
         domain_writers = {
             "literature_review": self.write_literature_review,
             "startup_research": self.write_startup_research,
+            "idea_evaluation": self.write_idea_evaluation,
         }
         if manifest is not None:
             for d_entry in manifest.reports.domain:
@@ -593,6 +594,20 @@ class ReportGenerator:
             md = deterministic_findings(claims, evidence)
         self._write("startup_research.md", "# Startup Research\n\n" + md + "\n")
         return True
+
+    def write_idea_evaluation(self, project) -> bool:
+        """READ-ONLY (INVARIANT-004): renders idea_evaluation.md from persisted state via
+        the specialist's single read-only view. Never runs a pipeline."""
+        from research_engine.specialists.startup.reports import StartupReportWriter
+        from research_engine.specialists.startup.service import StartupResearchService
+        try:
+            svc = StartupResearchService(cfg=self.cfg, data_dir=self.cfg.storage.data_dir)
+            view = svc.idea_evaluation_view(project.id)
+            StartupReportWriter(self.ws.reports, self.provider).write_idea_evaluation(view)
+            return True
+        except Exception as exc:
+            log.warning("report idea_evaluation.md failed (isolated): %s", exc)
+            return False
 
     def _startup_view_from_store(self, project_id: str) -> dict:
         """Read-only reconstruction of discovery/validation views for

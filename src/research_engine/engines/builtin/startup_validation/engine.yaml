@@ -1,0 +1,212 @@
+schema_version: 1
+name: startup_validation
+display_name: "Startup idea evaluation & validation"
+version: "1.0.0"
+description: "Evaluates ONE stated startup idea (not market discovery): is the problem real, who has it, what do they do today, will they pay, can you reach them, what kills it. Falsification-first; ends in a verdict, kill criteria and the cheapest real-world tests."
+extends: null
+
+clarifier:
+  hint: "startup IDEA evaluation and validation. The question is an idea card: line 1 is the idea, later lines are labelled fields (problem, customer_segment, alternative, price_point, ...). Set the objective to ONE sentence that evaluates this specific idea; do not broaden it into a market survey."
+  prompt_template: "problem_clarifier"
+  # Order = priority when the question cap is reached. A key counts as provided when it
+  # appears in the question text, so the idea card labels use exactly these snake_case keys.
+  required_inputs:
+    - customer_segment
+    - problem
+    - alternative
+    - price_point
+    - riskiest_assumption
+    - geography
+    - existing_traction
+    - founder_constraints
+  ask_user_when: []
+
+planning:
+  fallback_to_branches: true
+  source_preferences:
+    - web
+  branches:
+    - category: PAIN
+      default_question: "Do real people in the target segment experience the problem behind this idea, how often, how severely, and what do they do about it today? Idea: {question}"
+      importance: 0.95
+      required_evidence: "first-hand complaints, workarounds, time or money spent on the problem"
+      route: [web, forum]
+      fallback: true
+    - category: ALTERNATIVES
+      default_question: "What do customers use instead today, including spreadsheets, manual work, agencies and doing nothing, and why do they stay with it? Idea: {question}"
+      importance: 0.9
+      required_evidence: "named alternatives and evidence of switching or non-switching behaviour"
+      route: [web, forum]
+      fallback: true
+    - category: PRICING
+      default_question: "What do customers or comparable products actually charge and pay for this job, and which signals are payments rather than opinions? Idea: {question}"
+      importance: 0.9
+      required_evidence: "prices, invoices, budgets, existing spend; not stated intentions"
+      route: [web]
+      fallback: true
+    - category: COMPETITORS
+      default_question: "Which companies already solve this for this segment, how are they positioned and priced, and what do their customers complain about? Idea: {question}"
+      importance: 0.85
+      required_evidence: "competitor products, pricing pages, reviews"
+      route: [web]
+      fallback: true
+    - category: CUSTOMERS
+      default_question: "Who exactly is the buyer and the user, how many exist in the stated geography, and are they reachable? Idea: {question}"
+      importance: 0.85
+      required_evidence: "segment definitions, counts, buyer roles"
+      route: [web]
+      fallback: true
+    - category: RISKS
+      default_question: "Which startups tried something similar and failed, pivoted or shut down, and why? What is the strongest argument against this idea? Idea: {question}"
+      importance: 0.9
+      required_evidence: "post-mortems, failures, negative reviews, reasons customers refused"
+      route: [web, forum]
+      fallback: true
+    - category: DISTRIBUTION
+      default_question: "Which channels reach this buyer, what do they cost, and what do competitors rely on? Idea: {question}"
+      importance: 0.75
+      required_evidence: "channel evidence and acquisition cost signals"
+      route: [web]
+      fallback: false
+    - category: REGULATIONS
+      default_question: "What regulation, licensing, data or compliance requirement can block or slow this idea in the stated geography? Idea: {question}"
+      importance: 0.6
+      required_evidence: "statutes, regulator guidance, compliance cost"
+      route: [web, government]
+      fallback: false
+    - category: MARKET
+      default_question: "How large is the reachable market, estimated bottom-up from buyer counts and price, with attributed sources? Idea: {question}"
+      importance: 0.6
+      required_evidence: "attributed size figures with definitions"
+      route: [web]
+      fallback: false
+    - category: TIMING
+      default_question: "Why now: what changed recently that makes this idea possible or necessary, and is it real or hype? Idea: {question}"
+      importance: 0.6
+      required_evidence: "dated, attributed catalysts"
+      route: [web]
+      fallback: false
+    - category: TECHNOLOGY
+      default_question: "Is the idea technically feasible for a small team with current technology, and what is the hardest technical risk? Idea: {question}"
+      importance: 0.5
+      required_evidence: "feasibility evidence, prior implementations"
+      route: [web, openalex, arxiv]
+      fallback: false
+
+extraction:
+  schema_hint: "customer segment; pain statement; frequency; current workaround; competitor or alternative; price or spend; demand signal type; whether the claim supports or contradicts the idea"
+  prompt_template: "evidence_extractor"
+  domain_schema: "schema.json"
+  require_verbatim_quote: true
+  require_claim_support: true
+
+analysis:
+  structural_checks:
+    - source_diversity
+    - negative_evidence
+    - independent_replication
+    - causality
+    - customer_segments
+    - competitors
+    - validation_evidence
+    - geography
+  specialist_pipeline: startup_validation
+
+loop:
+  setup:
+    - step: clarify
+      pause_after: false
+      gate: AFTER_PROBLEM_DEFINITION
+    - step: ask_user
+      blocking: false
+      max_questions: 6
+    - step: plan
+      pause_after: false
+      gate: AFTER_INITIAL_RESEARCH_PLAN
+    - step: generate_queries
+  per_iteration:
+    - step: search
+      budget: max_queries_per_iteration
+    - step: fetch_and_parse
+      max_parallel: max_parallel_fetches
+    - step: extract_evidence
+    - step: verify_and_dedup
+    - step: detect_contradictions
+    - step: detect_gaps
+    - step: evaluate_convergence
+      pause_after: false
+    - step: generate_followups
+  stop_when:
+    - metric: new_evidence_rate
+      op: "<="
+      value: 0.10
+      after_iteration: 2
+    - metric: duplicate_rate
+      op: ">="
+      value: 0.70
+      after_iteration: 1
+    - metric: gaps_open
+      op: "=="
+      value: 0
+      after_iteration: 1
+  synthesis:
+    - step: specialist_pipeline
+    - step: write_reports
+
+reports:
+  core:
+    - problem.md
+    - research_plan.md
+    - info.md
+    - sources.md
+    - gaps.md
+    - research_log.md
+    - source_trail.md
+  domain:
+    - id: idea_evaluation
+      file: idea_evaluation.md
+    - id: startup_research
+      file: startup_research.md
+  intelligence:
+    - id: evidence_map
+      file: evidence_map.md
+    - id: contradiction_report
+      file: contradiction_report.md
+    - id: research_timeline
+      file: research_timeline.md
+    - id: market_map
+      file: market_map.md
+    - id: validation_candidates
+      file: validation_candidates.md
+  reasoning:
+    - id: hypotheses
+      file: hypotheses.md
+    - id: assumptions
+      file: assumptions.md
+    - id: decision_analysis
+      file: decision_analysis.md
+    - id: validation_plan
+      file: validation_plan.md
+
+tunables:
+  max_iterations: 3
+  max_queries_per_iteration: 8
+  max_documents: 50
+  max_sources_total: 150
+  max_llm_calls: 300
+  max_wall_clock_minutes: 60
+  new_evidence_threshold: 0.10
+  duplicate_rate_converged: 0.70
+  results_per_query: 10
+  max_chunk_chars: 6000
+  chunk_overlap_chars: 400
+  review_gates_enabled: false
+  ask_user_enabled: true
+  ask_user_blocking: false
+  max_user_questions_per_run: 6
+
+safety:
+  allow_skip_quote_verification: false
+  allow_skip_claim_support: false
+  allow_network_in_local_only: false
+  require_counterevidence_for_opportunities: true

@@ -605,7 +605,7 @@ class Orchestrator:
                 _specialist = get_engine(p.mode).analysis.specialist_pipeline
             except Exception:
                 _specialist = "startup" if p.mode == "startup" else None
-            if _specialist == "startup":
+            if _specialist in ("startup", "startup_validation"):
                 # P0-12: single canonical pipeline. No legacy fallback —
                 # a specialist failure is surfaced honestly (warning + event)
                 # instead of silently double-writing via the retired engine.
@@ -614,14 +614,18 @@ class Orchestrator:
                         StartupResearchService)
                     svc = StartupResearchService(cfg=self.cfg,
                                                  data_dir=self.cfg.storage.data_dir)
-                    spipe = svc.run_full_pipeline(p.id)
+                    spipe = (svc.run_validation_pipeline(p.id)
+                             if _specialist == "startup_validation"
+                             else svc.run_full_pipeline(p.id))
                     n_opp = spipe.get("discovery", {}).get("count", 0)
                     n_tests = sum(len(pl.get("tests_designed", []))
                                   for pl in spipe.get("validation", {}).get("plans", []))
                     self._startup_pipeline_result = spipe
                     self.events.record(
                         p.id, "startup_pipeline_complete", "reasoning",
-                        metadata={"opportunities": n_opp, "validation_tests": n_tests},
+                        metadata={"opportunities": n_opp, "validation_tests": n_tests,
+                                  "verdict": ((spipe.get("evaluation") or {}).get("verdict")
+                                              or {}).get("verdict")},
                         human_line=(f"Startup specialist: {n_opp} evidence-gated "
                                     f"opportunities, {n_tests} validation tests designed"))
                 except Exception as exc:
