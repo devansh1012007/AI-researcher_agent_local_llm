@@ -91,10 +91,13 @@ def score_project(repos: Repositories, project_id: str,
 
     claims = repos.claims.all(project_id)
     verified_ev_ids: set[str] = set()
+    from research_engine.pipeline.claim_support import verify_claim_support
     for e in ok_ev:
         ct = chunks.get(e.chunk_id)
         if ct is not None and verify_quote(e.quote, ct)[0]:
-            verified_ev_ids.add(e.id)
+            support = verify_claim_support(e.claim_text, e.quote)
+            if support.supports:
+                verified_ev_ids.add(e.id)
     if claims:
         covered = 0
         for c in claims:
@@ -124,9 +127,12 @@ def score_project(repos: Repositories, project_id: str,
                     cited_bullets += 1
             s.report_citation_coverage = round(cited_bullets / len(bullet_lines), 4)
         else:
-            s.report_citation_coverage = s.citation_coverage
+            s.report_citation_coverage = 0.0
     else:
-        s.report_citation_coverage = s.citation_coverage
+        # Missing reports or missing evidence-backed bullets are missing
+        # evidence, not a perfect score inferred from the internal DB graph.
+        s.report_citation_coverage = 0.0
+        s.notes.append("report citation coverage unavailable: no rendered info.md")
 
     if expected_subquestions:
         covered = 0

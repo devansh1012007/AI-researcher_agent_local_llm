@@ -180,6 +180,15 @@ class Orchestrator:
 
     def run(self, max_iterations: int | None = None) -> ResearchProject:
         p = self.project
+        routing_summary = ", ".join(
+            f"{role}={item['provider']}/{item['model']}"
+            for role, item in self.router.run_metadata.items()
+        )
+        self.events.record(
+            p.id, "run_metadata", "model_router",
+            metadata={"llm_roles": self.router.run_metadata},
+            human_line=f"[{_ts()}] LLM routing: {routing_summary}",
+        )
         try:
             runner = self._build_loop_runner(max_iterations=max_iterations)
             runner.run_orchestrated(self, max_iterations=max_iterations)

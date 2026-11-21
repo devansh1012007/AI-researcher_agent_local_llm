@@ -27,6 +27,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 os.environ["GAR_MODELS__EXTRACTOR__PROVIDER"] = "mock"
 os.environ["GAR_MODELS__REASONING__PROVIDER"] = "mock"
 os.environ["GAR_MODELS__SYNTHESIS__PROVIDER"] = "mock"
+os.environ["GAR_MODELS__ALLOW_MOCK"] = "true"  # explicit test-only mock profile
 os.environ["GAR_SEARCH__WEB_PROVIDER"] = "none"
 os.environ["GAR_EMBEDDINGS__PROVIDER"] = "hashing"
 # Pin LOCAL_ONLY off so the suite stays hermetic regardless of an ambient
@@ -116,6 +117,9 @@ def platform_ctx(tmp_path):
     c.research.max_iterations = 1
     c.search.web_provider = "none"
     c.search.academic_providers = []
+    # General endpoint tests opt out explicitly. The production default is
+    # authenticated loopback; auth-boundary tests exercise that default.
+    c.platform.api.allow_unauthenticated_loopback = True
     ctx = ServiceContext(cfg=c)
     yield ctx
     ctx.stop_scheduler()

@@ -15,7 +15,7 @@ from research_engine.providers.llm.openai_compat import (
     LlamaCppProvider,
     OpenAICompatibleProvider,
 )
-from research_engine.providers.llm.router import build_provider
+from research_engine.providers.llm.router import ModelRouter, build_provider
 
 
 class TestP1_1_UnknownProviderFailsExplicitly:
@@ -46,6 +46,23 @@ class TestP1_1_UnknownProviderFailsExplicitly:
         ns = type("A", (), {"config": str(bad_cfg)})()
         rc = cli.cmd_doctor(ns)
         assert rc == 1
+
+
+class TestExplicitMockProviderProfile:
+    def test_mock_provider_is_rejected_without_explicit_opt_in(self):
+        cfg = AppConfig()
+        cfg.models.extractor.provider = "mock"
+        with pytest.raises(ValueError, match="models.allow_mock: true"):
+            ModelRouter(cfg)
+
+    def test_explicit_mock_profile_is_visible_in_run_metadata(self):
+        cfg = AppConfig()
+        cfg.models.allow_mock = True
+        cfg.models.extractor.provider = "mock"
+        router = ModelRouter(cfg)
+        assert router.run_metadata["extractor"] == {
+            "provider": "mock", "model": "qwen2.5:7b", "mock": True
+        }
 
 
 class TestP1_7_ExampleConfigAndWiredKnobs:

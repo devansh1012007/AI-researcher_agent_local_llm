@@ -56,6 +56,10 @@ def test_way_1_builtin_example_researcher_end_to_end(tmp_path: Path):
 
     # End-to-end orchestrator + planner + evidence extraction with jibrish schema attributes
     cfg = AppConfig()
+    cfg.models.allow_mock = True
+    cfg.models.extractor.provider = "mock"
+    cfg.models.reasoning.provider = "mock"
+    cfg.models.synthesis.provider = "mock"
     cfg.storage.data_dir = str(tmp_path / "data_way1")
     orch = Orchestrator.create_project(
         cfg,

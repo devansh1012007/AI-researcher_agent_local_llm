@@ -50,6 +50,10 @@ def test_third_party_product_teardown_pack_end_to_end(tmp_path: Path):
 
         # 3. Orchestrator project creation, effective tunables, and required_input question generation
         cfg = AppConfig()
+        cfg.models.allow_mock = True
+        cfg.models.extractor.provider = "mock"
+        cfg.models.reasoning.provider = "mock"
+        cfg.models.synthesis.provider = "mock"
         cfg.storage.data_dir = str(tmp_path / "data")
         orch = Orchestrator.create_project(
             cfg,

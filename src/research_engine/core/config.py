@@ -20,8 +20,8 @@ SUPPORTED_LLM_PROVIDERS: frozenset[str] = frozenset(
 
 
 class LLMRoleConfig(BaseModel):
-    provider: str = "mock"  # mock | ollama | openai_compatible | llama_cpp
-    model: str = "mock-model"
+    provider: str = "ollama"  # mock | ollama | openai_compatible | llama_cpp
+    model: str = "qwen2.5:7b"
     base_url: str = ""
     api_key: str = ""  # for local servers that want any non-empty key
     temperature: float = 0.1
@@ -43,6 +43,7 @@ class LLMRoleConfig(BaseModel):
 
 
 class LLMConfig(BaseModel):
+    allow_mock: bool = False  # explicit opt-in; never silently use mock in real runs
     extractor: LLMRoleConfig = Field(default_factory=LLMRoleConfig)
     reasoning: LLMRoleConfig = Field(default_factory=LLMRoleConfig)
     synthesis: LLMRoleConfig = Field(default_factory=LLMRoleConfig)
@@ -112,7 +113,8 @@ class ApiConfig(BaseModel):
     enabled: bool = True
     host: str = "127.0.0.1"            # NEVER default to 0.0.0.0 (spec #67)
     port: int = 8000
-    auth_token: str = ""               # required when host != 127.0.0.1
+    auth_token: str = ""               # generated per process on loopback when unset
+    allow_unauthenticated_loopback: bool = False  # explicit local-only opt-out
 
 
 # Decision: one shared, FAIL-CLOSED predicate decides what counts as a
