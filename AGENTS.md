@@ -128,7 +128,7 @@ source .venv/bin/activate
 All runtime deps (including `fastapi`/`uvicorn`) come from
 `[project.dependencies]` — there is nothing extra to install.
 
-**Verified baseline:** `308 passed, 1 skipped` in ~2 min. The suite is fully
+**Verified baseline:** `552 passed, 1 skipped` in ~2.5 min. The suite is fully
 offline; no network or model needed.
 
 `gar.yaml` is **optional**. `AppConfig.load()` looks for `gar.yaml` /

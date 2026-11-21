@@ -56,6 +56,27 @@ class ModelRouter:
         self.policy = build_egress_policy(app_cfg)
         self._cache: dict[str, LLMProvider] = {}
         self.total_calls = 0
+        # Validate every role at construction, not only when the first request
+        # happens to touch it. This makes bad production configuration fail at
+        # startup instead of halfway through a research run.
+        for role in ("extractor", "reasoning", "synthesis"):
+            role_cfg: LLMRoleConfig = getattr(self.app_cfg.models, role)
+            role_cfg.validate_provider()
+            if role_cfg.provider == "mock" and not self.app_cfg.models.allow_mock:
+                raise ValueError(
+                    "MockProvider is disabled for normal runs; set "
+                    "models.allow_mock: true only for an explicit offline/test profile"
+                )
+        self.run_metadata = {
+            role: {
+                "provider": getattr(self.app_cfg.models, role).provider,
+                "model": getattr(self.app_cfg.models, role).model,
+                "mock": getattr(self.app_cfg.models, role).provider == "mock",
+            }
+            for role in ("extractor", "reasoning", "synthesis")
+        }
+        if any(item["mock"] for item in self.run_metadata.values()):
+            log.warning("explicit MockProvider configuration enabled: %s", self.run_metadata)
 
     def for_role(self, role: str) -> LLMProvider:
         if role not in self._cache:

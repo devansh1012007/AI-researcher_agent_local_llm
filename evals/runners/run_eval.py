@@ -136,6 +136,53 @@ def _startup_gates(task: dict, orch) -> list[str]:
     return failures
 
 
+# Live-quality gates measure quality the offline scripted world cannot
+# produce (real contradictions, natural subquestion coverage). They are
+# enforced for live runs; the offline run enforces the pre-existing gates
+# so the deterministic smoke test stays comparable to base behavior.
+_LIVE_QUALITY_GATE_KEYS = frozenset({
+    "min_subquestion_coverage",
+    "min_report_citation_coverage",
+    "min_gaps_resolved",
+    "min_contradictions_found",
+})
+
+
+def _metric_gate_failures(task: dict, scores, accepted_ev_count: int = 0,
+                          live_gates: bool = True) -> list[str]:
+    """Apply task quality contracts to measured metrics; never infer success."""
+    q = task.get("quality_expectations", {})
+    qg = task.get("quality_gates", {})
+    if not live_gates:
+        qg = {k: v for k, v in qg.items() if k not in _LIVE_QUALITY_GATE_KEYS}
+    failures: list[str] = []
+
+    checks = (
+        (q, "min_primary_ratio", scores.primary_source_ratio, "primary_ratio"),
+        (q, "min_citation_coverage", scores.citation_coverage, "citation_coverage"),
+        (q, "min_quote_correctness", scores.quote_correctness, "quote_correctness"),
+        (qg, "min_primary_ratio", scores.primary_source_ratio, "primary_ratio"),
+        (qg, "min_citation_coverage", scores.citation_coverage, "citation_coverage"),
+        (qg, "quote_correctness_min", scores.quote_correctness, "quote_correctness"),
+        (qg, "min_subquestion_coverage", scores.subquestion_coverage, "subquestion_coverage"),
+        (qg, "min_report_citation_coverage", scores.report_citation_coverage, "report_citation_coverage"),
+        (qg, "min_gaps_resolved", scores.gaps_resolved, "gaps_resolved"),
+        (qg, "min_contradictions_found", scores.contradictions_found, "contradictions_found"),
+        (qg, "subq_coverage_min", scores.subquestion_coverage, "subq_coverage"),
+        (qg, "min_evidence", accepted_ev_count, "min_evidence"),
+        (qg, "min_sources", scores.sources_accepted, "min_sources"),
+    )
+    for config, key, actual, label in checks:
+        threshold = config.get(key)
+        if threshold is not None and actual < threshold:
+            failures.append(label)
+    if qg.get("duplicate_max") is not None and scores.duplicate_rate > qg["duplicate_max"]:
+        failures.append("duplicate_rate")
+    if task.get("expect_gaps") and scores.gaps_discovered == 0:
+        failures.append("expected_gaps_but_none_found")
+    return failures
+
+
 def run_offline(task: dict, cfg: AppConfig):
     """Deterministic offline run through fakes, in an ISOLATED fresh workspace.
 
@@ -205,33 +252,9 @@ def main():
         scores = score_project(repos, orch.project.id,
                                task.get("expected_subquestions"))
         scores.wall_clock_seconds = secs
-        q = task.get("quality_expectations", {})
-        qg = task.get("quality_gates", {})
-        failures = []
-        if q.get("min_primary_ratio") and scores.primary_source_ratio < q["min_primary_ratio"]:
-            failures.append("primary_ratio")
-        if q.get("min_citation_coverage") and scores.citation_coverage < q["min_citation_coverage"]:
-            failures.append("citation_coverage")
-        if q.get("min_quote_correctness") and scores.quote_correctness < q["min_quote_correctness"]:
-            failures.append("quote_correctness")
-        # Phase 4 quality_gates block (wired in per C21)
-        if qg.get("min_primary_ratio") and scores.primary_source_ratio < qg["min_primary_ratio"]:
-            failures.append("primary_ratio")
-        if qg.get("min_citation_coverage") and scores.citation_coverage < qg["min_citation_coverage"]:
-            failures.append("citation_coverage")
-        if qg.get("quote_correctness_min") and scores.quote_correctness < qg["quote_correctness_min"]:
-            failures.append("quote_correctness")
-        if qg.get("duplicate_max") is not None and scores.duplicate_rate > qg["duplicate_max"]:
-            failures.append("duplicate_rate")
         accepted_ev_count = repos.evidence.count(orch.project.id, "status!='REJECTED'")
-        if qg.get("min_evidence") is not None and accepted_ev_count < qg["min_evidence"]:
-            failures.append("min_evidence")
-        if qg.get("min_sources") is not None and scores.sources_accepted < qg["min_sources"]:
-            failures.append("min_sources")
-        if qg.get("subq_coverage_min") is not None and scores.subquestion_coverage < qg["subq_coverage_min"]:
-            failures.append("subq_coverage")
-        if task.get("expect_gaps") and not scores.gaps_discovered:
-            failures.append("expected_gaps_but_none_found")
+        failures = _metric_gate_failures(task, scores, accepted_ev_count,
+                                         live_gates=not args.offline)
         # Phase 4 lifecycle gate: project must reach a clean terminal state
         if task.get("expect_completed"):
             state = orch.project.state.value
@@ -252,7 +275,8 @@ def main():
     out = ROOT / "evals" / "last_eval_results.json"
     out.write_text(json.dumps(results, indent=2, default=str))
     print(f"\nResults written to {out}")
+    return 1 if any(row["status"] != "PASS" for row in results) else 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

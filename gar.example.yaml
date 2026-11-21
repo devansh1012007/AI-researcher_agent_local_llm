@@ -2,6 +2,7 @@
 # All values here are the safe defaults for a laptop.
 
 models:
+  allow_mock: false          # true only for an explicit offline/test run
   extractor:
     provider: ollama      # ollama | openai_compatible | llama_cpp | mock
     model: qwen2.5:7b
@@ -72,7 +73,8 @@ platform:                     # Phase 4: platform lifecycle (docs/configuration.
     enabled: true
     host: "127.0.0.1"         # NEVER expose without setting auth_token (#67)
     port: 8000
-    auth_token: ""            # or env GAR_PLATFORM__API__AUTH_TOKEN
+    auth_token: ""            # auto-generated for loopback if unset; printed once by `research serve`
+    allow_unauthenticated_loopback: false  # dangerous opt-out for isolated single-user setups
   mcp:
     enabled: true             # `research mcp` serves tools over stdio
   security:

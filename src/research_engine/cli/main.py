@@ -1052,7 +1052,12 @@ def cmd_serve(args):
     # header is spoofable), so it cannot stand in for the listener's address.
     ctx.cfg.platform.api.host = host
     from research_engine.api.app import create_app
-    uvicorn.run(create_app(ctx), host=host, port=port, log_level="info")
+    app = create_app(ctx)
+    generated_token = getattr(app.state, "generated_api_token", None)
+    if generated_token:
+        console.print("[yellow]Generated loopback API token (valid for this server process):[/yellow]")
+        console.print(generated_token)
+    uvicorn.run(app, host=host, port=port, log_level="info")
 
 
 def cmd_mcp(args):

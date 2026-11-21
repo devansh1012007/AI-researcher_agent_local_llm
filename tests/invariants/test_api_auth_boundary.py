@@ -1,14 +1,11 @@
-"""INV-014: the API requires a token exactly when the server is bound to a
-non-loopback address.
+"""INV-014: the API requires a token by default, including on loopback.
 
-The bug this guards: `research serve --host 0.0.0.0` bound every interface
-while the app authorised on the CONFIGURED host (127.0.0.1), so the whole API
-was served unauthenticated — and `Dockerfile`'s CMD is exactly that command.
+External binds require an operator-configured token. Loopback bypass is
+allowed only through the explicit `allow_unauthenticated_loopback`
+configuration flag.
 
-Decision (owner): loopback stays unauthenticated. That makes the bind
-address the ONLY auth boundary, so the address the server binds and the
-address the app authorises on must be the same value — and both must use the
-same fail-closed predicate.
+The bind address must still be the same value the app authorises against;
+otherwise a CLI host override could bypass the security boundary.
 """
 from __future__ import annotations
 
@@ -23,15 +20,26 @@ class TestApiAuthBoundary:
         return TestClient(create_app(ctx))
 
     def test_loopback_bind_needs_no_token(self, platform_ctx):
-        """D-3 pinned: a loopback bind is a trusted boundary.
+        """Unauthenticated loopback is available only as an explicit opt-out.
 
-        This is a deliberate property, not an accident — it is pinned so it
-        cannot drift silently in either direction.
+        The production default is covered by the generated-token test below.
         """
         platform_ctx.cfg.platform.api.host = "127.0.0.1"
         platform_ctx.cfg.platform.api.auth_token = ""
+        platform_ctx.cfg.platform.api.allow_unauthenticated_loopback = True
         client = self._client(platform_ctx)
         assert client.get("/projects").status_code == 200
+
+    def test_loopback_auth_is_on_by_default_and_generates_token(self, platform_ctx):
+        platform_ctx.cfg.platform.api.host = "127.0.0.1"
+        platform_ctx.cfg.platform.api.auth_token = ""
+        platform_ctx.cfg.platform.api.allow_unauthenticated_loopback = False
+        client = self._client(platform_ctx)
+        token = platform_ctx.cfg.platform.api.auth_token
+        assert len(token) >= 40
+        assert client.get("/projects").status_code == 401
+        assert client.get("/projects", headers={"X-API-Token": "wrong"}).status_code == 401
+        assert client.get("/projects", headers={"X-API-Token": token}).status_code == 200
 
     def test_external_bind_requires_token_on_the_request_path(self, platform_ctx):
         """A non-loopback bind must reject an unauthenticated request."""

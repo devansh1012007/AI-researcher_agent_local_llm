@@ -9,20 +9,38 @@
 
 ## Findings
 
-### S-01 [FACT][Medium] Localhost API is unauthenticated by default
-Token enforced only for non-local binds (D15). Any local process (malicious npm package, other user session) can drive the full research API — create projects, run jobs, read all stored research, trigger experiment execution approval flows that require only RESEARCH/WRITE perms. On a single-user laptop this is a documented tradeoff; as soon as `serve` runs on 0.0.0.0 WITH a token but filesystem holds research_data/, the token protects HTTP but nothing else local. Recommendation: default-on loopback token with auto-generated value printed once; opt-out flag.
+### S-01 [RESOLVED BY PATCH] Loopback API authentication
+Loopback requests now require a per-process random token by default. `research serve`
+prints a generated token once when no token is configured. Unauthenticated loopback
+access requires the explicit `platform.api.allow_unauthenticated_loopback: true`
+opt-out. External binds still require an operator-configured token.
 
-### S-02 [FACT][Medium] Prompt-injection surface into extraction/planning
-Web chunk text flows verbatim into evidence_extractor / planner prompts (documented boundary tests exist for report synthesis). Injection can steer extraction JSON (fabricated claims with in-chunk quotes PASS quote verification by construction) and steer query generation toward attacker-chosen sources. Mitigations present: schema validation + quote verification + tier weights; missing: claim-faithfulness check (BUG-09) and source-allowlist weighting for planner-proposed queries. Severity bounded by LOCAL_ONLY defaults.
+### S-02 [PARTIALLY MITIGATED] Retrieved-content prompt injection
+The reviewed revision already contains untrusted-content prompt fences and a deterministic
+claim-support verifier; the previous audit statement that claim-faithfulness checking was
+absent was stale. These controls reduce obvious quote/claim inversions but do not prove
+semantic entailment or prevent all planner steering. Source-allowlist weighting and a
+human-reviewed adversarial false-acceptance/false-rejection study remain open.
 
-### S-03 [FACT][Low] Unknown LLM provider silently becomes MockProvider
-router.py:29-32 logs a warning then degrades. In HYBRID deployments a typo'd provider name silently produces mock-grade "evidence" marked EXTRACTED — a data-quality/security-adjacent footgun rather than classic vuln. Should hard-fail outside offline profiles.
+### S-03 [STALE FINDING / CLOSED IN BASE REVISION] Unknown LLM provider
+The router already raises `ValueError` for an unknown provider, and the config
+tests pin this behaviour. The base-revision audit text was stale. This patch also
+requires explicit `models.allow_mock: true` before the known `mock` provider can
+be selected by `ModelRouter`; the configured provider/model for each role is
+available in `ModelRouter.run_metadata` and mock selection is logged as a warning.
 
-### S-04 [FACT][Low] Experiment child env relies on GAR_EXPERIMENT_WORKDIR trust
-User code can *overwrite* its own workdir env var pre-write to widen write containment to any path (guard compares against env value at event time). Network/RLIMIT still hold. Fix: pass root via argv constant compiled into guard prefix, not env.
+### S-04 [PATCHED, DEFENCE-IN-DEPTH] Experiment filesystem containment
+The child no longer derives the allowed root from a mutable environment variable.
+The parent passes the resolved workdir into a closure-backed audit hook before
+executing task code. Write checks resolve symlink targets and cover common
+filesystem mutation events, while `dir_fd` mutations are rejected. This remains
+defence in depth: Python audit hooks are not a substitute for OS/container
+isolation against fully hostile Python code.
 
-### S-05 [INFERENCE][Low] MCP stdio server trusts framing
-Hand-rolled line-delimited JSON-RPC without max-length guards; a hostile co-resident process on the same stdin pipe is already game-over; risk accepted for local-first scope.
+### S-05 [RESOLVED IN BASE REVISION] MCP line-size guard
+The stdio server already rejects oversized input lines at 1 MiB. The prior note
+claiming the guard was absent was stale; transport framing remains a local-process
+trust boundary rather than an authenticated remote transport.
 
 ### S-06 [FACT][Info] Secrets hygiene
 Scrubbed child env covers API keys; redaction exists in obs_logging (tested). No secrets found committed; .env.example placeholders only.

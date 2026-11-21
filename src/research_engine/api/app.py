@@ -3,8 +3,9 @@
 Thin adapter: request validation + service calls + structured errors.
 No business logic lives here; the API never touches SQLite.
 
-Security defaults (spec #67): binds localhost only; auth token REQUIRED if
-bound externally; untrusted-content boundaries respected downstream.
+Security defaults (spec #67): loopback is authenticated by default using a
+per-process token; unauthenticated loopback is an explicit opt-out. External
+binds always require an operator-configured token.
 """
 from __future__ import annotations
 
@@ -82,6 +83,18 @@ def create_app(ctx: ServiceContext | None = None) -> FastAPI:
 
     app = FastAPI(title="GAR Research Platform", version="4.0",
                   description="Local-first evidence-grounded research platform")
+    api_cfg = get_ctx().cfg.platform.api
+    generated_token = None
+    if not api_cfg.auth_token and not api_cfg.allow_unauthenticated_loopback:
+        if not is_loopback_host(api_cfg.host):
+            raise ValueError(
+                "external API binding requires platform.api.auth_token"
+            )
+        # Loopback is reachable by other local processes and users. Generate a
+        # per-process secret rather than treating localhost as authentication.
+        generated_token = secrets.token_urlsafe(32)
+        api_cfg.auth_token = generated_token
+    app.state.generated_api_token = generated_token
     auth = make_auth_dependency(get_ctx)
 
     # ------------------------------------------------------------- health
@@ -515,8 +528,7 @@ def _job_dict(j) -> dict:
 
 
 def make_auth_dependency(get_ctx):
-    """Auth per spec #67: a token is required ONLY when the server is bound
-    to a non-loopback address.
+    """Auth per spec #67: require a token unless loopback opt-out is explicit.
 
     Decision: resolve the context through the SAME lazy getter the routes
     use, and compare the token in constant time.
@@ -531,10 +543,11 @@ def make_auth_dependency(get_ctx):
     """
     def dependency(request: Request) -> str:
         ctx = get_ctx()
-        host_cfg = ctx.cfg.platform.api.host
-        if is_loopback_host(host_cfg):
+        api_cfg = ctx.cfg.platform.api
+        host_cfg = api_cfg.host
+        if is_loopback_host(host_cfg) and api_cfg.allow_unauthenticated_loopback:
             return "local"
-        token = ctx.cfg.platform.api.auth_token
+        token = api_cfg.auth_token
         provided = request.headers.get("X-API-Token", "")
         if not token or not secrets.compare_digest(provided.encode(),
                                                    token.encode()):

@@ -55,6 +55,30 @@ class TestSandbox:
         assert ex.status == "FAILED"
         assert not target.exists()
 
+    def test_write_through_symlink_outside_workdir_denied(self, runner, tmp_path):
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        target = outside / "escaped.txt"
+        code = (
+            f"import os; os.symlink({str(outside)!r}, 'escape-link')\n"
+            "open('escape-link/escaped.txt', 'w').write('pwned')\n"
+        )
+        ex = runner.execute("proj_sbx_symlink", {"code": code, "timeout_seconds": 15})
+        assert ex.status == "FAILED", ex.stderr
+        assert "sandbox" in ex.stderr.lower() or "PermissionError" in ex.stderr
+        assert not target.exists(), "symlink target outside workdir must remain untouched"
+
+    def test_workdir_environment_tampering_does_not_change_sandbox_root(self, runner, tmp_path):
+        target = tmp_path / "env-escape.txt"
+        code = (
+            "import os\n"
+            f"os.environ['GAR_EXPERIMENT_WORKDIR'] = {str(tmp_path)!r}\n"
+            f"open({str(target)!r}, 'w').write('pwned')\n"
+        )
+        ex = runner.execute("proj_sbx_env_tamper", {"code": code, "timeout_seconds": 15})
+        assert ex.status == "FAILED", ex.stderr
+        assert not target.exists()
+
     def test_timeout_kills(self, runner):
         ex = runner.execute("proj_sbx", {"code": "while True: pass",
                                          "timeout_seconds": 2})

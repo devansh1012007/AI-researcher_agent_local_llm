@@ -25,7 +25,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from research_engine.core.config import AppConfig
-from research_engine.experiments._sandbox_guard import _guard
 from research_engine.security.permissions import PathSandbox
 
 # Runs INSIDE the child process first (via -c wrapper).
@@ -127,18 +126,20 @@ class LocalExperimentRunner:
         network_on = bool(spec.get("network_enabled", ex_cfg.network_enabled))
 
         preexec = self._limits(mem_bytes, cpu_s) if sys.platform == "linux" else None
-        guard_prefix = (
-            "from research_engine.experiments._sandbox_guard import _guard\n"
-            "import sys as _sys\n"
-            "_sys.addaudithook(_guard)\n"
-            if ex_cfg.sandbox else ""
-        )
+        guard_prefix = ""
+        if ex_cfg.sandbox:
+            # Pass the resolved root as a literal into a closure before any
+            # experiment code executes. Do not trust mutable child env vars.
+            guard_prefix = (
+                "import sys as _sys\n"
+                "from research_engine.experiments._sandbox_guard import build_guard as _build_guard\n"
+                f"_hook = _build_guard({str(workdir.resolve())!r}, {not network_on!r})\n"
+                "_sys.addaudithook(_hook)\n"
+                "del _hook, _build_guard, _sys\n"
+            )
         cmd = [sys.executable, "-I", "-c",
                guard_prefix + _RUNNER_TEMPLATE.format(entry=str(entry), argv="experiment.py")]
         child_env = self._child_env()
-        child_env["GAR_EXPERIMENT_WORKDIR"] = str(workdir)
-        if network_on:
-            child_env["GAR_EXPERIMENT_NETWORK"] = "1"
         t0 = time.time()
         try:
             proc = subprocess.run(

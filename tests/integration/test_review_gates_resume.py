@@ -29,6 +29,7 @@ class _StubWebSearch(SearchProvider):
 
 def test_review_gates_pause_and_resume_reaches_completed(tmp_path: Path, monkeypatch):
     cfg = AppConfig()
+    cfg.models.allow_mock = True
     cfg.storage.data_dir = str(tmp_path / "data")
     cfg.research.review_gates_enabled = True
     cfg.research.max_iterations = 2

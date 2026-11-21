@@ -44,10 +44,15 @@ API binds 127.0.0.1 by default; CLI refuses non-local binding without an auth
 token; MCP speaks stdio only. Privacy mode (`privacy_mode: true`) disables all
 external calls (#99-103).
 
-The bind address is the only auth boundary (INV-014): the server binds and the
-API authorises on the *same* address, and anything that is not provably
-loopback (`127.0.0.0/8`, `::1`, `localhost`) — including a wildcard bind such
-as `0.0.0.0` — requires `X-API-Token`. The token is compared in constant time.
+Loopback is authenticated by default (INV-014): `research serve` generates a
+per-process token when none is configured and prints it once; requests without
+`X-API-Token` are rejected. Set `platform.api.allow_unauthenticated_loopback:
+true` (or `GAR_PLATFORM__API__ALLOW_UNAUTHENTICATED_LOOPBACK=true`) only for an
+isolated single-user setup. External binds (anything not provably loopback —
+`127.0.0.0/8`, `::1`, `localhost` — including a wildcard bind such as
+`0.0.0.0`) always require `X-API-Token`; the app authorises on the address the
+server actually binds (the same value `cmd_serve` propagates). The token is
+compared in constant time.
 
 Only the liveness/metadata probes (`/health`, `/ready`, `/info`) and FastAPI's
 own `/docs`, `/redoc`, `/openapi.json` are reachable without a token. The

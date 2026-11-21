@@ -12,8 +12,24 @@ from research_engine.storage.database import Database
 from research_engine.storage.repositories import Repositories
 from research_engine.models.evidence import Evidence
 from research_engine.models.enums import EvidenceStatus
-from evals.metrics.eval_metrics import score_project
-from evals.runners.run_eval import load_tasks, run_offline
+from evals.metrics.eval_metrics import EvalScores, score_project
+from evals.runners.run_eval import _metric_gate_failures, load_tasks, run_offline
+
+
+def test_quality_gates_reject_uninformative_contradiction_probe():
+    task = {"quality_gates": {
+        "min_subquestion_coverage": 0.5,
+        "min_report_citation_coverage": 0.5,
+        "min_contradictions_found": 1,
+    }}
+    scores = EvalScores(subquestion_coverage=0.0,
+                        report_citation_coverage=0.0,
+                        contradictions_found=0)
+    failures = _metric_gate_failures(task, scores)
+    assert set(failures) == {
+        "subquestion_coverage", "report_citation_coverage",
+        "contradictions_found",
+    }
 
 
 def test_duplicate_rate_zero_when_rejections_no_duplicates(tmp_path):
@@ -44,6 +60,7 @@ def test_duplicate_rate_zero_when_rejections_no_duplicates(tmp_path):
 
     s = score_project(repos, pid)
     assert s.duplicate_rate == 0.0
+    assert s.report_citation_coverage == 0.0  # no report is not a perfect citation score
     assert s.duplicate_rate != repos.evidence.rejected_ratio(pid)
 
 
